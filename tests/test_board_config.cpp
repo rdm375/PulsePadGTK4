@@ -21,7 +21,7 @@ static BoardState populated_board() {
     BoardState s;
     s.gridRows = 2;
     s.gridColumns = 2;
-    s.masterVolume = 0.75f;
+    s.masterVolumeDb = -12.0f;
     s.themeMode = AppThemeMode::Dark;
     s.midiEnabled = true;
     s.midiPortName = "MIDI Port A";
@@ -73,7 +73,7 @@ static void test_round_trip_populated_board() {
     auto decoded = decode_board_config(encode_board_config(s));
     CHECK_EQ(decoded.gridRows, 2);
     CHECK_EQ(decoded.gridColumns, 2);
-    CHECK_NEAR(decoded.masterVolume, 0.75f, 0.0001f);
+    CHECK_NEAR(decoded.masterVolumeDb, -12.0f, 0.0001f);
     CHECK(decoded.themeMode == AppThemeMode::Dark);
     CHECK_EQ(decoded.midiPortName, "MIDI Port A");
     CHECK_EQ(decoded.buttons.size(), 4u);
@@ -115,7 +115,7 @@ static void test_empty_and_minimal_configs() {
     CHECK_EQ(def.gridColumns, 3);
     CHECK_EQ(def.buttons.size(), 9u);
     CHECK_EQ(def.buttons[0].label, "Pad 1");
-    CHECK_EQ(def.masterVolume, 1.0f);
+    CHECK_EQ(def.masterVolumeDb, 0.0f);
     CHECK(def.themeMode == AppThemeMode::Light);
 
     auto old = decode_board_config("{\"grid\":{\"rows\":1,\"columns\":1},\"buttons\":[{\"id\":0,\"label\":\"Old\",\"filename_or_asset_id\":\"old.wav\",\"loop\":true,\"group\":\"Legacy\",\"assigned\":true}],\"future_field\":{\"ignored\":true}}");
@@ -148,10 +148,10 @@ static void test_playback_config_migration() {
 }
 
 static void test_invalid_values_default_or_clamp() {
-    auto s = decode_board_config("{\"grid\":{\"rows\":99,\"columns\":0},\"master_volume\":2.5,\"theme_mode\":\"Future\",\"buttons\":[{\"id\":0,\"color\":\"chartreuse\",\"volume\":99,\"playback_speed\":-1.5,\"playback_pitch\":99,\"pan\":-9,\"trim_start\":-1,\"trim_end\":0.5,\"fade_in_ms\":999999,\"midi_channel\":99,\"midi_note\":300}]}");
+    auto s = decode_board_config("{\"grid\":{\"rows\":99,\"columns\":0},\"master_volume_db\":2.5,\"theme_mode\":\"Future\",\"buttons\":[{\"id\":0,\"color\":\"chartreuse\",\"volume\":99,\"playback_speed\":-1.5,\"playback_pitch\":99,\"pan\":-9,\"trim_start\":-1,\"trim_end\":0.5,\"fade_in_ms\":999999,\"midi_channel\":99,\"midi_note\":300}]}");
     CHECK_EQ(s.gridRows, 8);
     CHECK_EQ(s.gridColumns, 1);
-    CHECK_NEAR(s.masterVolume, 1.0f, 0.0001f);
+    CHECK_NEAR(s.masterVolumeDb, 0.0f, 0.0001f);
     CHECK(s.themeMode == AppThemeMode::Light);
     CHECK_EQ(s.buttons[0].color, "default");
     CHECK_NEAR(s.buttons[0].volume, 4.0f, 0.0001f);
@@ -172,9 +172,9 @@ static void test_corrupt_config_fails_without_generating_replacement() {
 
     CHECK_NOTHROW(decode_board_config("{\"buttons\": []}"));
     CHECK_NOTHROW(decode_board_config("{\"grid\": \"wrong-type\", \"buttons\": \"wrong-type\", \"unknown\": {\"ignored\": true}}"));
-    auto wrongTypes = decode_board_config("{\"grid\": \"wrong-type\", \"buttons\": \"wrong-type\", \"master_volume\": \"loud\"}");
+    auto wrongTypes = decode_board_config("{\"grid\": \"wrong-type\", \"buttons\": \"wrong-type\", \"master_volume_db\": \"loud\"}");
     CHECK_EQ(wrongTypes.buttons.size(), 9u);
-    CHECK_NEAR(wrongTypes.masterVolume, 1.0f, 0.0001f);
+    CHECK_NEAR(wrongTypes.masterVolumeDb, 0.0f, 0.0001f);
 }
 
 static void test_filename_sanitization() {

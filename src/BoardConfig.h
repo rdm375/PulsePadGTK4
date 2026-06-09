@@ -64,7 +64,7 @@ struct BoardState {
     std::vector<PadGroup> groups;
     int gridRows = 3;
     int gridColumns = 3;
-    float masterVolume = 1.0f;
+    float masterVolumeDb = 0.0f;
     AppThemeMode themeMode = AppThemeMode::Light;
     std::string status = "Ready";
     bool midiEnabled = true;

@@ -146,7 +146,7 @@ public:
         panoramaAvailable = audioCaps.panoramaAvailable;
         audioAmplifyAvailable = audioCaps.audioAmplifyAvailable;
         append_dependency_status();
-        audio.set_master_volume(state.masterVolume);
+        audio.set_master_volume(db_to_linear_volume(state.masterVolumeDb));
         midiDispatcher.connect(sigc::mem_fun(*this, &PulsePadWindow::process_midi_events));
         build_ui();
         apply_theme();
@@ -172,12 +172,12 @@ private:
     BoardState state;
     FileDialogMemory fileDialogMemory;
 
-    Gtk::Box root{Gtk::ORIENTATION_VERTICAL, 12};
-    Gtk::Box toolbar{Gtk::ORIENTATION_HORIZONTAL, 8};
+    Gtk::Box root{Gtk::Orientation::VERTICAL, 12};
+    Gtk::Box toolbar{Gtk::Orientation::HORIZONTAL, 8};
     Gtk::Grid grid;
-    Gtk::Box bottom{Gtk::ORIENTATION_HORIZONTAL, 12};
+    Gtk::Box bottom{Gtk::Orientation::HORIZONTAL, 12};
     Gtk::Expander mixerExpander{"Mixer / Currently Playing"};
-    Gtk::Box mixerList{Gtk::ORIENTATION_VERTICAL, 4};
+    Gtk::Box mixerList{Gtk::Orientation::VERTICAL, 4};
     Gtk::Label mixerEmptyLabel{"No sounds playing"};
     std::map<int, Gtk::ProgressBar*> mixerProgressByKey;
     size_t mixerLastPlayingCount = 0;
@@ -186,7 +186,7 @@ private:
     Gtk::Button exportButton;
     Gtk::Button settingsButton;
     Gtk::Button stopButton;
-    Gtk::Scale masterScale{Gtk::ORIENTATION_HORIZONTAL};
+    Gtk::Scale masterScale{Gtk::Orientation::HORIZONTAL};
     Gtk::Label masterLabel;
     Gtk::Label statusLabel;
     Glib::RefPtr<Gtk::CssProvider> themeCssProvider;
@@ -412,10 +412,17 @@ private:
         stopButton.set_tooltip_text("Stop all currently playing pads");
         stopButton.signal_clicked().connect([this]() { audio.stop_all_with_fade(); set_status("All playback stopped"); refresh_mixer_ui(); });
         bottom.append(stopButton );
-        auto* volumeBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 4);
-        masterScale.set_range(0.0, 1.0);
-        masterScale.set_increments(0.01, 0.1);
-        masterScale.signal_value_changed().connect([this]() { set_master_volume(static_cast<float>(masterScale.get_value())); });
+        auto* volumeBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
+        volumeBox->set_hexpand(true);
+        masterScale.set_hexpand(true);
+        masterScale.set_range(PAD_VOLUME_MIN_DB, 0.0);
+        masterScale.set_increments(1.0, 6.0);
+        masterScale.add_mark(PAD_VOLUME_MIN_DB, Gtk::PositionType::BOTTOM, "Mute");
+        masterScale.add_mark(-24.0, Gtk::PositionType::BOTTOM, "-24");
+        masterScale.add_mark(-12.0, Gtk::PositionType::BOTTOM, "-12");
+        masterScale.add_mark(-6.0, Gtk::PositionType::BOTTOM, "-6");
+        masterScale.add_mark(0.0, Gtk::PositionType::BOTTOM, "0 dB");
+        masterScale.signal_value_changed().connect([this]() { set_master_volume_db(static_cast<float>(masterScale.get_value())); });
         volumeBox->append(masterLabel );
         volumeBox->append(masterScale );
         bottom.append(*volumeBox );
@@ -429,7 +436,7 @@ private:
         root.append(mixerExpander );
 
         statusLabel.set_xalign(0.0f);
-        statusLabel.set_line_wrap(true);
+        statusLabel.set_wrap(true);
         root.append(statusLabel );
         auto keyController = Gtk::EventControllerKey::create();
         keyController->signal_key_pressed().connect([this](guint keyval, guint, Gdk::ModifierType) { return on_key_press(keyval); }, false);
@@ -481,7 +488,6 @@ button {
 button:focus {
   border-radius: 18px;
   transition: none;
-  -gtk-outline-radius: 18px;
 }
 button { background-color: #303134;
  color: #f1f3f4;
@@ -494,13 +500,11 @@ button:hover { background-color: #3c4043; }
   font-size: 16px;
   font-weight: 600;
   border-radius: 18px;
-  -gtk-outline-radius: 18px;
   border-width: 4px;
   border-style: solid;
 }
 .pad-button:focus {
   border-radius: 18px;
-  -gtk-outline-radius: 18px;
 }
 
 .pad-default { border-color: #5f6368; }
@@ -539,13 +543,11 @@ button:hover { background-color: #dadce0; }
   font-size: 16px;
   font-weight: 600;
   border-radius: 18px;
-  -gtk-outline-radius: 18px;
   border-width: 4px;
   border-style: solid;
 }
 .pad-button:focus {
   border-radius: 18px;
-  -gtk-outline-radius: 18px;
 }
 
 .pad-default { border-color: #dadce0; }
@@ -641,7 +643,7 @@ entry { background: #ffffff; color: #202124; }
             int key = info.key;
             bool padKey = key >= 0 && key < static_cast<int>(state.buttons.size());
             const SoundButton* bp = padKey ? &state.buttons.at(checked_index(key)) : nullptr;
-            auto* row = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+            auto* row = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
             row->get_style_context()->add_class("mixer-row");
             row->set_hexpand(true);
 
@@ -651,7 +653,7 @@ entry { background: #ffffff; color: #202124; }
             const double frac = playback_progress_fraction(info.position, duration, info.trimStart, info.trimEnd);
             const std::string meta = playing_detail(info, bp, group);
 
-            auto* textBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 2);
+            auto* textBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 2);
             auto* title = Gtk::make_managed<Gtk::Label>(name);
             title->set_xalign(0.0f);
             auto* detail = Gtk::make_managed<Gtk::Label>(meta);
@@ -734,8 +736,8 @@ entry { background: #ffffff; color: #202124; }
     }
 
     void refresh_header_ui() {
-        masterScale.set_value(state.masterVolume);
-        masterLabel.set_text("Master volume: " + std::to_string(static_cast<int>(state.masterVolume * 100)) + "%");
+        masterScale.set_value(state.masterVolumeDb);
+        masterLabel.set_text("Master volume: " + format_db(state.masterVolumeDb));
         ui::setup_icon_button(settingsButton, "emblem-system-symbolic", "Settings");
         const bool boardBusy = boardImportInProgress || boardExportInProgress;
         importButton.set_sensitive(!boardBusy);
@@ -767,9 +769,9 @@ entry { background: #ffffff; color: #202124; }
         statusLabel.set_text(state.status);
     }
 
-    void set_master_volume(float value) {
-        state.masterVolume = clampf(value, 0.0f, 1.0f);
-        audio.set_master_volume(state.masterVolume);
+    void set_master_volume_db(float value) {
+        state.masterVolumeDb = clampf(value, PAD_VOLUME_MIN_DB, 0.0f);
+        audio.set_master_volume(db_to_linear_volume(state.masterVolumeDb));
         repository.save(state);
         refresh_ui();
     }
@@ -807,9 +809,9 @@ entry { background: #ffffff; color: #202124; }
 
     void open_settings_dialog() {
         Gtk::Dialog dialog("Settings", *this, true);
-        dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
-        dialog.add_button("Save", Gtk::RESPONSE_OK);
-        dialog.set_default_response(Gtk::RESPONSE_OK);
+        dialog.add_button("Cancel", Gtk::ResponseType::CANCEL);
+        dialog.add_button("Save", Gtk::ResponseType::OK);
+        dialog.set_default_response(Gtk::ResponseType::OK);
         dialog.set_resizable(true);
         dialog.set_default_size(760, 520);
         auto* box = dialog.get_content_area();
@@ -822,11 +824,11 @@ entry { background: #ffffff; color: #202124; }
             return frame;
         };
 
-        auto* generalBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* generalBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*generalBox, 10);
         Gtk::Button themeButton("Theme: " + to_string(state.themeMode));
 
-        auto* gridSizeRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+        auto* gridSizeRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         Gtk::Label gridSizeLabel("Grid Size:");
         gridSizeLabel.set_xalign(0.0f);
         Gtk::Label rowsLabel("Rows");
@@ -850,17 +852,17 @@ entry { background: #ffffff; color: #202124; }
         gridSizeRow->append(columnsSpin );
 
         Gtk::Label note("Changing rows/columns resizes the pad grid. Pads outside a smaller grid are removed.");
-        note.set_line_wrap(true);
+        note.set_wrap(true);
         note.set_xalign(0.0f);
         generalBox->append(themeButton );
         generalBox->append(*gridSizeRow );
         generalBox->append(note );
 
-        auto* midiBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* midiBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*midiBox, 10);
         Gtk::CheckButton midiEnable("Enable MIDI input");
         midiEnable.set_active(state.midiEnabled);
-        auto* midiRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+        auto* midiRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         Gtk::Label midiPortLabel("Input Port");
         midiPortLabel.set_xalign(0.0f);
         Gtk::ComboBoxText midiPortCombo;
@@ -877,13 +879,13 @@ entry { background: #ffffff; color: #202124; }
         midiHelp.set_text("MIDI support was not built. Install librtmidi-dev and rebuild.");
 #endif
         midiHelp.set_xalign(0.0f);
-        midiHelp.set_line_wrap(true);
+        midiHelp.set_wrap(true);
         midiRow->append(midiPortLabel );
         midiRow->append(midiPortCombo );
         Gtk::Label midiLastLabel;
         midiLastLabel.set_xalign(0.0f);
         midiLastLabel.set_text("Last MIDI: " + state.lastMidiEvent);
-        auto* midiMonitorRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+        auto* midiMonitorRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         Gtk::Button midiClearMonitor("Clear Monitor");
         midiMonitorRow->append(midiLastLabel );
         midiMonitorRow->append(midiClearMonitor );
@@ -893,11 +895,11 @@ entry { background: #ffffff; color: #202124; }
         midiBox->append(midiHelp );
         midiBox->append(*midiMonitorRow );
 
-        auto* groupsBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* groupsBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*groupsBox, 10);
         Gtk::Label groupHelp("Define up to 6 named groups. Exclusive groups can stop, fade, or crossfade. Enable ducking on a group to attenuate its targets while that group is active; leave Targets blank to duck all other groups.");
         groupHelp.set_xalign(0.0f);
-        groupHelp.set_line_wrap(true);
+        groupHelp.set_wrap(true);
         groupsBox->append(groupHelp );
 
         constexpr int GROUP_COL_NAME = 180;
@@ -920,7 +922,7 @@ entry { background: #ffffff; color: #202124; }
             widget.set_hexpand(false);
         };
 
-        auto* header = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+        auto* header = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
         header->set_homogeneous(false);
         Gtk::Label hName("Name");
         Gtk::Label hType("Type");
@@ -976,7 +978,7 @@ entry { background: #ffffff; color: #202124; }
         std::vector<GroupRowWidgets> groupRows;
         const int groupRowCount = MAX_PAD_GROUPS;
         for (int i = 0; i < groupRowCount; ++i) {
-            auto* row = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
+            auto* row = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
             row->set_homogeneous(false);
             auto* name = Gtk::make_managed<Gtk::Entry>();
             configure_group_widget(*name, GROUP_COL_NAME);
@@ -1050,12 +1052,12 @@ entry { background: #ffffff; color: #202124; }
         auto* notebook = Gtk::make_managed<Gtk::Notebook>();
         notebook->set_scrollable(true);
 
-        auto* generalTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 12);
+        auto* generalTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 12);
         ::set_margin(*generalTab, 10);
         generalTab->append(*make_section("General", *generalBox) );
         generalTab->append(*make_section("MIDI", *midiBox) );
 
-        auto* groupsTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* groupsTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*groupsTab, 10);
         groupsTab->append(*make_section("Groups", *groupsBox) );
 
@@ -1084,10 +1086,9 @@ entry { background: #ffffff; color: #202124; }
             return true;
         }, 120);
 
-        dialog.
         int response = run_dialog_blocking(dialog);
         midiMonitorTimer.disconnect();
-        if (response != Gtk::RESPONSE_OK && response != Gtk::RESPONSE_APPLY && response != Gtk::RESPONSE_ACCEPT) return;
+        if (response != Gtk::ResponseType::OK && response != Gtk::ResponseType::APPLY && response != Gtk::ResponseType::ACCEPT) return;
 
         auto split_targets = [](const std::string& raw) {
             std::set<std::string> targets;
@@ -1334,9 +1335,9 @@ entry { background: #ffffff; color: #202124; }
         SoundButton originalButton = state.buttons.at(checked_index(id));
         SoundButton b = originalButton;
         Gtk::Dialog dialog("Edit " + b.label, *this, true);
-        dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
-        dialog.add_button("Save", Gtk::RESPONSE_OK);
-        dialog.set_default_response(Gtk::RESPONSE_OK);
+        dialog.add_button("Cancel", Gtk::ResponseType::CANCEL);
+        dialog.add_button("Save", Gtk::ResponseType::OK);
+        dialog.set_default_response(Gtk::ResponseType::OK);
         dialog.set_resizable(true);
         auto* box = dialog.get_content_area();
         box->set_spacing(12);
@@ -1348,7 +1349,7 @@ entry { background: #ffffff; color: #202124; }
             return frame;
         };
 
-        auto* padBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* padBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*padBox, 10);
         Gtk::Label labelCaption("Label");
         labelCaption.set_xalign(0.0f);
@@ -1367,7 +1368,7 @@ entry { background: #ffffff; color: #202124; }
         loadButton.set_tooltip_text("Assign an audio file to this pad");
         clearButton.set_tooltip_text("Remove this pad audio and related generated files");
         resetLabelButton.set_tooltip_text("Use the audio filename as the pad label");
-        auto* padButtonRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 6);
+        auto* padButtonRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
         padButtonRow->append(loadButton );
         padButtonRow->append(clearButton );
         padButtonRow->append(resetLabelButton );
@@ -1377,7 +1378,7 @@ entry { background: #ffffff; color: #202124; }
         padBox->append(colorCombo );
         padBox->append(*padButtonRow );
 
-        auto* triggerBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* triggerBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*triggerBox, 10);
         Gtk::Label groupCaption("Group");
         groupCaption.set_xalign(0.0f);
@@ -1392,7 +1393,7 @@ entry { background: #ffffff; color: #202124; }
         groupCombo.set_active_id(b.exclusiveGroup);
         Gtk::Label groupHelp("Groups are defined in Settings. Exclusive groups stop each other; play groups only share color/organization.");
         groupHelp.set_xalign(0.0f);
-        groupHelp.set_line_wrap(true);
+        groupHelp.set_wrap(true);
         Gtk::Label hotkeyLabel;
         hotkeyLabel.set_xalign(0.0f);
         Gtk::Button learnHotkeyButton("Learn Hotkey");
@@ -1400,7 +1401,7 @@ entry { background: #ffffff; color: #202124; }
         groupCombo.set_tooltip_text("Choose how this pad interacts with grouped pads");
         learnHotkeyButton.set_tooltip_text("Press a keyboard key to trigger this pad");
         clearHotkeyButton.set_tooltip_text("Remove the keyboard shortcut for this pad");
-        auto* hotkeyRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 6);
+        auto* hotkeyRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
         hotkeyRow->append(learnHotkeyButton );
         hotkeyRow->append(clearHotkeyButton );
         Gtk::Label midiLabel;
@@ -1409,7 +1410,7 @@ entry { background: #ffffff; color: #202124; }
         Gtk::Button clearMidiButton("Clear MIDI");
         learnMidiButton.set_tooltip_text("Listen for the next MIDI note and map it to this pad");
         clearMidiButton.set_tooltip_text("Remove the MIDI note mapping for this pad");
-        auto* midiTriggerRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 6);
+        auto* midiTriggerRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 6);
         midiTriggerRow->append(learnMidiButton );
         midiTriggerRow->append(clearMidiButton );
         triggerBox->append(groupCaption );
@@ -1425,7 +1426,7 @@ entry { background: #ffffff; color: #202124; }
         int learnedMidiChannel = b.midiChannel;
         int learnedMidiNote = b.midiNote;
 
-        auto* playbackBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* playbackBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*playbackBox, 10);
         Gtk::Label modeCaption("Mode");
         modeCaption.set_xalign(0.0f);
@@ -1446,25 +1447,25 @@ entry { background: #ffffff; color: #202124; }
         modeCombo.set_tooltip_text("Choose whether this pad plays once, loops, or restarts when triggered again");
 
         Gtk::Label volLabel, speedLabel, panLabel, fadeInLabel, fadeOutLabel;
-        Gtk::Scale vol(Gtk::ORIENTATION_HORIZONTAL), speed(Gtk::ORIENTATION_HORIZONTAL), pan(Gtk::ORIENTATION_HORIZONTAL), fadeIn(Gtk::ORIENTATION_HORIZONTAL), fadeOut(Gtk::ORIENTATION_HORIZONTAL);
+        Gtk::Scale vol(Gtk::Orientation::HORIZONTAL), speed(Gtk::Orientation::HORIZONTAL), pan(Gtk::Orientation::HORIZONTAL), fadeIn(Gtk::Orientation::HORIZONTAL), fadeOut(Gtk::Orientation::HORIZONTAL);
         vol.set_range(PAD_VOLUME_MIN_DB, PAD_VOLUME_MAX_DB);
         speed.set_range(0, 2);
         pan.set_range(-1, 1);
-        vol.add_mark(PAD_VOLUME_MIN_DB, Gtk::POS_BOTTOM, "Mute");
-        vol.add_mark(-24.0, Gtk::POS_BOTTOM, "-24");
-        vol.add_mark(-12.0, Gtk::POS_BOTTOM, "-12");
-        vol.add_mark(-6.0, Gtk::POS_BOTTOM, "-6");
-        vol.add_mark(0.0, Gtk::POS_BOTTOM, "0 dB");
-        vol.add_mark(6.0, Gtk::POS_BOTTOM, "+6");
-        vol.add_mark(PAD_VOLUME_MAX_DB, Gtk::POS_BOTTOM, "+12");
-        speed.add_mark(0.0, Gtk::POS_BOTTOM, "0.0");
-        speed.add_mark(0.5, Gtk::POS_BOTTOM, "0.5");
-        speed.add_mark(1.0, Gtk::POS_BOTTOM, "1.0x");
-        speed.add_mark(1.5, Gtk::POS_BOTTOM, "1.5");
-        speed.add_mark(2.0, Gtk::POS_BOTTOM, "2.0");
-        pan.add_mark(-1.0, Gtk::POS_BOTTOM, "Left");
-        pan.add_mark(0.0, Gtk::POS_BOTTOM, "Center");
-        pan.add_mark(1.0, Gtk::POS_BOTTOM, "Right");
+        vol.add_mark(PAD_VOLUME_MIN_DB, Gtk::PositionType::BOTTOM, "Mute");
+        vol.add_mark(-24.0, Gtk::PositionType::BOTTOM, "-24");
+        vol.add_mark(-12.0, Gtk::PositionType::BOTTOM, "-12");
+        vol.add_mark(-6.0, Gtk::PositionType::BOTTOM, "-6");
+        vol.add_mark(0.0, Gtk::PositionType::BOTTOM, "0 dB");
+        vol.add_mark(6.0, Gtk::PositionType::BOTTOM, "+6");
+        vol.add_mark(PAD_VOLUME_MAX_DB, Gtk::PositionType::BOTTOM, "+12");
+        speed.add_mark(0.0, Gtk::PositionType::BOTTOM, "0.0");
+        speed.add_mark(0.5, Gtk::PositionType::BOTTOM, "0.5");
+        speed.add_mark(1.0, Gtk::PositionType::BOTTOM, "1.0x");
+        speed.add_mark(1.5, Gtk::PositionType::BOTTOM, "1.5");
+        speed.add_mark(2.0, Gtk::PositionType::BOTTOM, "2.0");
+        pan.add_mark(-1.0, Gtk::PositionType::BOTTOM, "Left");
+        pan.add_mark(0.0, Gtk::PositionType::BOTTOM, "Center");
+        pan.add_mark(1.0, Gtk::PositionType::BOTTOM, "Right");
         fadeIn.set_range(0, 10000);
         fadeOut.set_range(0, 10000);
         vol.set_increments(0.1, 1.0);
@@ -1498,7 +1499,7 @@ entry { background: #ffffff; color: #202124; }
         playbackBox->append(fadeOutLabel );
         playbackBox->append(fadeOut );
 
-        auto* trimBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 8);
+        auto* trimBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*trimBox, 10);
         Gtk::Label trimStartLabel, trimEndLabel, durationLabel;
         trimStartLabel.set_xalign(0.0f);
@@ -1540,7 +1541,6 @@ entry { background: #ffffff; color: #202124; }
         const int previewKey = PREVIEW_KEY_BASE - id;
         Gtk::DrawingArea waveformArea;
         waveformArea.set_size_request(-1, 260);
-        waveformArea.set_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
         Gtk::Label waveformHelp("Waveform: click/drag nearest trim handle");
         waveformHelp.set_xalign(0.0f);
         auto dialogAlive = std::make_shared<std::atomic<bool>>(true);
@@ -1703,7 +1703,7 @@ entry { background: #ffffff; color: #202124; }
                 cr->stroke();
             } else {
                 cr->set_source_rgb(0.75, 0.75, 0.75);
-                cr->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
+                cr->select_font_face("Sans", Cairo::ToyFontFace::Slant::NORMAL, Cairo::ToyFontFace::Weight::NORMAL);
                 cr->set_font_size(12);
                 std::string msg = b.assigned ? "Waveform unavailable" : "Load audio on the Pad tab";
                 cr->move_to(10, h / 2.0 + 4);
@@ -1789,8 +1789,8 @@ entry { background: #ffffff; color: #202124; }
         }, 50);
 
         reloadWaveform();
-        auto* trimControlsRow = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_HORIZONTAL, 8);
-        trimControlsRow->set_valign(Gtk::ALIGN_CENTER);
+        auto* trimControlsRow = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::HORIZONTAL, 8);
+        trimControlsRow->set_valign(Gtk::Align::CENTER);
         trimControlsRow->append(trimStartLabel );
         trimControlsRow->append(trimStart );
         trimControlsRow->append(trimEndLabel );
@@ -1806,11 +1806,11 @@ entry { background: #ffffff; color: #202124; }
         trimBox->append(waveformHelp );
         trimBox->append(*trimControlsRow );
 
-        auto* statusBox = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 6);
+        auto* statusBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 6);
         ::set_margin(*statusBox, 10);
         Gtk::Label statusInfo;
         statusInfo.set_xalign(0.0f);
-        statusInfo.set_line_wrap(true);
+        statusInfo.set_wrap(true);
         statusBox->append(statusInfo );
 
         auto updateLabels = [&]() {
@@ -1872,20 +1872,20 @@ entry { background: #ffffff; color: #202124; }
         auto* notebook = Gtk::make_managed<Gtk::Notebook>();
         notebook->set_scrollable(false);
 
-        auto* padTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 10);
+        auto* padTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
         ::set_margin(*padTab, 10);
         padTab->append(*make_section("Pad", *padBox) );
         padTab->append(*make_section("Trigger", *triggerBox) );
 
-        auto* playbackTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 10);
+        auto* playbackTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
         ::set_margin(*playbackTab, 10);
         playbackTab->append(*make_section("Playback", *playbackBox) );
 
-        auto* trimTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 10);
+        auto* trimTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
         ::set_margin(*trimTab, 10);
         trimTab->append(*make_section("Trim", *trimBox) );
 
-        auto* advancedTab = Gtk::make_managed<Gtk::Box>(Gtk::ORIENTATION_VERTICAL, 10);
+        auto* advancedTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
         ::set_margin(*advancedTab, 10);
         advancedTab->append(*make_section("Status", *statusBox) );
 
@@ -1940,15 +1940,15 @@ entry { background: #ffffff; color: #202124; }
             cancel_reverse_job(id);
             commit_label();
             apply_controls_to_button();
-            Gtk::FileChooserDialog chooser(*this, "Load Audio", Gtk::FILE_CHOOSER_ACTION_OPEN);
-            chooser.add_button("Cancel", Gtk::RESPONSE_CANCEL);
-            chooser.add_button("Open", Gtk::RESPONSE_OK);
+            Gtk::FileChooserDialog chooser(*this, "Load Audio", Gtk::FileChooser::Action::OPEN);
+            chooser.add_button("Cancel", Gtk::ResponseType::CANCEL);
+            chooser.add_button("Open", Gtk::ResponseType::OK);
             auto filter = Gtk::FileFilter::create();
             filter->set_name("Audio files");
             filter->add_pattern("*.mp3"); filter->add_pattern("*.wav"); filter->add_pattern("*.ogg"); filter->add_pattern("*.flac"); filter->add_pattern("*.m4a");
             chooser.add_filter(filter);
             if (!fileDialogMemory.lastAudioImportDir.empty()) chooser.set_current_folder(Gio::File::create_for_path(fileDialogMemory.lastAudioImportDir));
-            if (run_dialog_blocking(chooser) == Gtk::RESPONSE_OK) {
+            if (run_dialog_blocking(chooser) == Gtk::ResponseType::OK) {
                 const auto selectedFile = chooser.get_file()->get_path();
                 remember_file_dialog_folder(fileDialogMemory.lastAudioImportDir, selectedFile);
                 SoundButton draft = b;
@@ -2211,7 +2211,6 @@ entry { background: #ffffff; color: #202124; }
             set_status("Preview stopped");
         });
 
-        dialog.
         int response = run_dialog_blocking(dialog);
         dialogAlive->store(false);
         *waveformTimerAlive = false;
@@ -2219,7 +2218,7 @@ entry { background: #ffffff; color: #202124; }
         previewActive = false;
         audio.stop_key_immediate(previewKey);
         midiLearnCallback = nullptr;
-        if (response == Gtk::RESPONSE_OK) {
+        if (response == Gtk::ResponseType::OK) {
             if (originalButton.storedFilename != b.storedFilename) { cancel_reverse_job(id); reverseErrors.erase(id); set_status_light(um::reverse_invalidated()); }
             commit_label();
             apply_controls_to_button();
@@ -2292,7 +2291,7 @@ entry { background: #ffffff; color: #202124; }
                     return;
                 }
                 state = std::move(outcome.value);
-                audio.set_master_volume(state.masterVolume);
+                audio.set_master_volume(db_to_linear_volume(state.masterVolumeDb));
                 state.status = "Board loaded";
                 refresh_ui();
             });
@@ -2302,7 +2301,6 @@ entry { background: #ffffff; color: #202124; }
 #include "PulsePadWindow.h"
 
 int run_pulsepad_app(int argc, char** argv) {
-    auto app = Gtk::Application::create(argc, argv);
-    PulsePadWindow window;
-    return app->run(window);
+    auto app = Gtk::Application::create("org.pulsepad.gtk");
+    return app->make_window_and_run<PulsePadWindow>(argc, argv);
 }

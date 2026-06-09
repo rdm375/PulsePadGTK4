@@ -149,9 +149,9 @@ static std::string esc(const std::string& s) {
 std::string encode_board_config(const BoardState& state) {
     std::ostringstream o;
     o << std::boolalpha << "{\n";
-    o << "  \"format\": \"soundboard-config\",\n  \"version\": 2,\n";
+    o << "  \"format\": \"soundboard-config\",\n  \"version\": 3,\n";
     o << "  \"grid\": {\"rows\": " << state.gridRows << ", \"columns\": " << state.gridColumns << "},\n";
-    o << "  \"master_volume\": " << state.masterVolume << ",\n";
+    o << "  \"master_volume_db\": " << clampf(state.masterVolumeDb, -60.0f, 0.0f) << ",\n";
     o << "  \"theme_mode\": \"" << to_string(state.themeMode) << "\",\n";
     o << "  \"midi_enabled\": " << (state.midiEnabled ? "true" : "false") << ",\n";
     o << "  \"midi_port_name\": \"" << esc(state.midiPortName) << "\",\n";
@@ -289,7 +289,7 @@ BoardState decode_board_config(const std::string& text) {
     auto root = JsonParser(text).parse();
     if (auto format = obj_get(root, "format"); format && format->type == JsonParser::Str && format->s != "soundboard-config") throw std::runtime_error("Invalid board package manifest");
     const int version = static_cast<int>(numv(root, "version", 1));
-    if (version > 2) throw std::runtime_error("Unsupported version: " + std::to_string(version));
+    if (version > 3) throw std::runtime_error("Unsupported version: " + std::to_string(version));
     BoardState state = default_board_state();
     if (auto grid = obj_get(root, "grid")) {
         state.gridRows = clamp_grid_size(static_cast<int>(numv(*grid, "rows", 3)));
@@ -298,7 +298,7 @@ BoardState decode_board_config(const std::string& text) {
     if (auto btn = obj_get(root, "buttons")) state.buttons = decode_buttons_value(*btn, state.gridRows * state.gridColumns);
     ensure_button_count(state.buttons, state.gridRows * state.gridColumns);
     state.groups = decode_groups_value(root, state.buttons);
-    state.masterVolume = clampf(static_cast<float>(numv(root, "master_volume", 1.0)), 0.0f, 1.0f);
+    state.masterVolumeDb = clampf(static_cast<float>(numv(root, "master_volume_db", 0.0)), -60.0f, 0.0f);
     state.themeMode = theme_from_string(strv(root, "theme_mode", "Light"));
     state.midiEnabled = boolv(root, "midi_enabled", true);
     state.midiPortName = strv(root, "midi_port_name", "");

@@ -48,7 +48,7 @@ static BoardState package_board() {
     BoardState state;
     state.gridRows = 1;
     state.gridColumns = 2;
-    state.masterVolume = 0.8f;
+    state.masterVolumeDb = -6.0f;
     state.buttons = default_buttons(2);
     state.buttons[0].id = 0;
     state.buttons[0].label = "Kick";
