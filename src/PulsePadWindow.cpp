@@ -425,7 +425,10 @@ private:
         masterScale.add_mark(-24.0, Gtk::PositionType::BOTTOM, "-24");
         masterScale.add_mark(-12.0, Gtk::PositionType::BOTTOM, "-12");
         masterScale.add_mark(-6.0, Gtk::PositionType::BOTTOM, "-6");
+		masterScale.add_mark(-3.0, Gtk::PositionType::BOTTOM, "-3");
         masterScale.add_mark(0.0, Gtk::PositionType::BOTTOM, "0 dB");
+		masterScale.add_mark(3.0, Gtk::PositionType::BOTTOM, "+3");
+        masterScale.add_mark(6.0, Gtk::PositionType::BOTTOM, "+6");
         masterScale.add_mark(PAD_VOLUME_MAX_DB, Gtk::PositionType::BOTTOM, "+12");
         masterScale.signal_value_changed().connect([this]() { set_master_volume_db(static_cast<float>(masterScale.get_value())); });
         volumeBox->append(masterLabel );
@@ -1664,7 +1667,9 @@ entry { background: #ffffff; color: #202124; }
         vol.add_mark(-24.0, Gtk::PositionType::BOTTOM, "-24");
         vol.add_mark(-12.0, Gtk::PositionType::BOTTOM, "-12");
         vol.add_mark(-6.0, Gtk::PositionType::BOTTOM, "-6");
+		vol.add_mark(-3.0, Gtk::PositionType::BOTTOM, "-3");
         vol.add_mark(0.0, Gtk::PositionType::BOTTOM, "0 dB");
+		vol.add_mark(3.0, Gtk::PositionType::BOTTOM, "+3");
         vol.add_mark(6.0, Gtk::PositionType::BOTTOM, "+6");
         vol.add_mark(PAD_VOLUME_MAX_DB, Gtk::PositionType::BOTTOM, "+12");
         speed.add_mark(0.0, Gtk::PositionType::BOTTOM, "0.0");
