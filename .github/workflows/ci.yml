@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  app-build-and-test:
+    name: GTK app build and tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install application dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgtkmm-3.0-dev \
+            libgstreamer1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            libzip-dev \
+            nlohmann-json3-dev \
+            librtmidi-dev \
+            ffmpeg \
+            appstream \
+            desktop-file-utils
+
+      - name: Configure full application build
+        run: >
+          cmake -S . -B build -G Ninja
+          -DBUILD_TESTING=ON
+          -DPULSEPAD_BUILD_APP=ON
+          -DPULSEPAD_ENABLE_WARNINGS=ON
+          -DPULSEPAD_WARNINGS_AS_ERRORS=ON
+
+      - name: Build all targets
+        run: cmake --build build
+
+      - name: Verify GTK application binary was built
+        run: test -x build/PulsePadGTK
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Validate desktop metadata
+        run: |
+          desktop-file-validate data/io.github.pulsepadgtk.PulsePad.desktop
+          appstreamcli validate --no-net data/io.github.pulsepadgtk.PulsePad.metainfo.xml
+
+  logic-only:
+    name: Dependency-light logic tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install logic-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build
+
+      - name: Configure logic-only build
+        run: >
+          cmake -S . -B build-logic -G Ninja
+          -DPULSEPAD_BUILD_APP=OFF
+          -DBUILD_TESTING=ON
+          -DPULSEPAD_ENABLE_WARNINGS=ON
+          -DPULSEPAD_WARNINGS_AS_ERRORS=ON
+
+      - name: Build logic tests
+        run: cmake --build build-logic
+
+      - name: Run logic tests
+        run: ctest --test-dir build-logic --output-on-failure
+
+  sanitizer:
+    name: Logic tests with sanitizers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            ninja-build
+
+      - name: Configure ASan/UBSan logic build
+        run: >
+          cmake -S . -B build-sanitize -G Ninja
+          -DPULSEPAD_BUILD_APP=OFF
+          -DBUILD_TESTING=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DPULSEPAD_ENABLE_WARNINGS=ON
+          -DPULSEPAD_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build sanitizer tests
+        run: cmake --build build-sanitize
+
+      - name: Run sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_init_order=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: ctest --test-dir build-sanitize --output-on-failure

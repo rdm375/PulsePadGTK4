@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.pulsepadgtk.PulsePad</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>PulsePad GTK</name>
+  <summary>Trigger audio pads for live playback</summary>
+  <developer_name>PulsePad GTK contributors</developer_name>
+  <description>
+    <p>
+      PulsePad GTK is a Linux desktop soundboard for assigning sounds to pads and triggering them during live production,
+      podcasting, streaming, theatre, tabletop gaming, and radio-style cart playback.
+    </p>
+    <p>
+      It supports multi-pad playback, trimming, reverse playback, per-pad settings, groups, MIDI input when built with RtMidi, and board
+      import/export packages.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.pulsepadgtk.PulsePad.desktop</launchable>
+  <url type="homepage">https://github.com/rdm375/PulsePadGTK</url>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+  <provides>
+    <binary>PulsePadGTK</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0" date="2026-06-06"/>
+  </releases>
+</component>

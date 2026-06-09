@@ -1,0 +1,13 @@
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  modernize-*,
+  performance-*,
+  readability-*
+WarningsAsErrors: ''
+HeaderFilterRegex: 'src/.*|tests/.*'
+CheckOptions:
+  - key: readability-identifier-length.IgnoredVariableNames
+    value: 'i|j|k|x|y|id|fs|ok|in|to|lo|hi|v'
+  - key: readability-function-cognitive-complexity.Threshold
+    value: '40'

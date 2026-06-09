@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PulsePad GTK
+GenericName=Soundboard
+Comment=Trigger and manage audio pads for live playback
+Exec=PulsePadGTK
+Icon=io.github.pulsepadgtk.PulsePad
+Categories=AudioVideo;Audio;Player;GTK;
+Keywords=soundboard;cartwall;audio;sample;sampler;podcast;streaming;midi;
+Terminal=false
+StartupNotify=true
