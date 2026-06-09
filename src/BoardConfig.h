@@ -10,6 +10,8 @@
 namespace pulsepad {
 
 inline constexpr int MAX_PAD_GROUPS = 6;
+inline constexpr float VOLUME_MIN_DB = -60.0f;
+inline constexpr float VOLUME_MAX_DB = 12.041199826559248f;
 
 enum class AppThemeMode { Light, Dark };
 enum class PlaybackMode { PlayThrough, Loop, Retrigger };
@@ -78,6 +80,7 @@ struct BoardState {
 float clampf(float v, float lo, float hi);
 float clamp_playback_speed(float v);
 float clamp_pad_volume(float v);
+float clamp_volume_db(float v);
 float clamp_pan(float v);
 int clamp_fade_ms(int v);
 float clamp_duck_amount_db(float v);

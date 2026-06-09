@@ -229,7 +229,7 @@ public:
     }
 
     void set_master_volume(float value) {
-        masterVolume = clampf(value, 0.0f, 1.0f);
+        masterVolume = clamp_pad_volume(value);
         for (auto& p : players) set_handle_gain(p, effective_volume(p->buttonVolume, p->duckDb));
     }
 

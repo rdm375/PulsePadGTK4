@@ -15,6 +15,7 @@ namespace fs = std::filesystem;
 float clampf(float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); }
 float clamp_playback_speed(float v) { return clampf(v, 0.0f, 2.0f); }
 float clamp_pad_volume(float v) { return clampf(v, 0.0f, 4.0f); }
+float clamp_volume_db(float v) { return clampf(v, VOLUME_MIN_DB, VOLUME_MAX_DB); }
 float clamp_pan(float v) { return clampf(v, -1.0f, 1.0f); }
 int clamp_fade_ms(int v) { return std::max(0, std::min(10000, v)); }
 float clamp_duck_amount_db(float v) { return clampf(std::abs(v), 0.0f, 36.0f); }
@@ -151,7 +152,7 @@ std::string encode_board_config(const BoardState& state) {
     o << std::boolalpha << "{\n";
     o << "  \"format\": \"soundboard-config\",\n  \"version\": 3,\n";
     o << "  \"grid\": {\"rows\": " << state.gridRows << ", \"columns\": " << state.gridColumns << "},\n";
-    o << "  \"master_volume_db\": " << clampf(state.masterVolumeDb, -60.0f, 0.0f) << ",\n";
+    o << "  \"master_volume_db\": " << clamp_volume_db(state.masterVolumeDb) << ",\n";
     o << "  \"theme_mode\": \"" << to_string(state.themeMode) << "\",\n";
     o << "  \"midi_enabled\": " << (state.midiEnabled ? "true" : "false") << ",\n";
     o << "  \"midi_port_name\": \"" << esc(state.midiPortName) << "\",\n";
@@ -298,7 +299,7 @@ BoardState decode_board_config(const std::string& text) {
     if (auto btn = obj_get(root, "buttons")) state.buttons = decode_buttons_value(*btn, state.gridRows * state.gridColumns);
     ensure_button_count(state.buttons, state.gridRows * state.gridColumns);
     state.groups = decode_groups_value(root, state.buttons);
-    state.masterVolumeDb = clampf(static_cast<float>(numv(root, "master_volume_db", 0.0)), -60.0f, 0.0f);
+    state.masterVolumeDb = clamp_volume_db(static_cast<float>(numv(root, "master_volume_db", 0.0)));
     state.themeMode = theme_from_string(strv(root, "theme_mode", "Light"));
     state.midiEnabled = boolv(root, "midi_enabled", true);
     state.midiPortName = strv(root, "midi_port_name", "");

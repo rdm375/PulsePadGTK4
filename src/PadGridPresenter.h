@@ -8,8 +8,8 @@
 
 namespace pulsepad {
 
-inline constexpr float PAD_VOLUME_MIN_DB = -60.0f;
-inline constexpr float PAD_VOLUME_MAX_DB = 12.041199826559248f;
+inline constexpr float PAD_VOLUME_MIN_DB = VOLUME_MIN_DB;
+inline constexpr float PAD_VOLUME_MAX_DB = VOLUME_MAX_DB;
 
 float linear_volume_to_db(float volume);
 float db_to_linear_volume(float db);

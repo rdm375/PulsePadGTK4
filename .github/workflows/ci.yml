@@ -23,7 +23,7 @@ jobs:
             cmake \
             ninja-build \
             pkg-config \
-            libgtkmm-3.0-dev \
+            libgtkmm-4.0-dev \
             libgstreamer1.0-dev \
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \

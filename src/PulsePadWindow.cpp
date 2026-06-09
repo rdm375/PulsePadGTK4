@@ -60,6 +60,7 @@ using pulsepad::clamp_duck_amount_db;
 using pulsepad::clamp_fade_ms;
 using pulsepad::clamp_grid_size;
 using pulsepad::clamp_pad_volume;
+using pulsepad::clamp_volume_db;
 using pulsepad::clamp_pan;
 using pulsepad::clamp_playback_speed;
 using pulsepad::clamp_time_seconds;
@@ -250,7 +251,7 @@ private:
         const auto depWarning = um::dependency_warning(ffmpegAvailable, ffprobeAvailable);
         if (!depWarning.empty()) warnings.push_back(depWarning);
         if (!panoramaAvailable) warnings.push_back("GStreamer audiopanorama missing: stereo pan may not work");
-        if (!audioAmplifyAvailable) warnings.push_back("GStreamer audioamplify missing: boosted pad volume/soft clipping may not work");
+        if (!audioAmplifyAvailable) warnings.push_back("GStreamer audioamplify missing: boosted pad/master volume soft clipping may not work");
 #ifndef HAVE_RTMIDI
         warnings.push_back("RtMidi missing at build time: MIDI input disabled");
 #endif
@@ -418,13 +419,14 @@ private:
         auto* volumeBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
         volumeBox->set_hexpand(true);
         masterScale.set_hexpand(true);
-        masterScale.set_range(PAD_VOLUME_MIN_DB, 0.0);
+        masterScale.set_range(PAD_VOLUME_MIN_DB, PAD_VOLUME_MAX_DB);
         masterScale.set_increments(1.0, 6.0);
         masterScale.add_mark(PAD_VOLUME_MIN_DB, Gtk::PositionType::BOTTOM, "Mute");
         masterScale.add_mark(-24.0, Gtk::PositionType::BOTTOM, "-24");
         masterScale.add_mark(-12.0, Gtk::PositionType::BOTTOM, "-12");
         masterScale.add_mark(-6.0, Gtk::PositionType::BOTTOM, "-6");
         masterScale.add_mark(0.0, Gtk::PositionType::BOTTOM, "0 dB");
+        masterScale.add_mark(PAD_VOLUME_MAX_DB, Gtk::PositionType::BOTTOM, "+12");
         masterScale.signal_value_changed().connect([this]() { set_master_volume_db(static_cast<float>(masterScale.get_value())); });
         volumeBox->append(masterLabel );
         volumeBox->append(masterScale );
@@ -777,7 +779,7 @@ entry { background: #ffffff; color: #202124; }
     }
 
     void set_master_volume_db(float value) {
-        state.masterVolumeDb = clampf(value, PAD_VOLUME_MIN_DB, 0.0f);
+        state.masterVolumeDb = clamp_volume_db(value);
         audio.set_master_volume(db_to_linear_volume(state.masterVolumeDb));
         repository.save(state);
         refresh_ui();

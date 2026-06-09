@@ -148,10 +148,10 @@ static void test_playback_config_migration() {
 }
 
 static void test_invalid_values_default_or_clamp() {
-    auto s = decode_board_config("{\"grid\":{\"rows\":99,\"columns\":0},\"master_volume_db\":2.5,\"theme_mode\":\"Future\",\"buttons\":[{\"id\":0,\"color\":\"chartreuse\",\"volume\":99,\"playback_speed\":-1.5,\"playback_pitch\":99,\"pan\":-9,\"trim_start\":-1,\"trim_end\":0.5,\"fade_in_ms\":999999,\"midi_channel\":99,\"midi_note\":300}]}");
+    auto s = decode_board_config("{\"grid\":{\"rows\":99,\"columns\":0},\"master_volume_db\":99,\"theme_mode\":\"Future\",\"buttons\":[{\"id\":0,\"color\":\"chartreuse\",\"volume\":99,\"playback_speed\":-1.5,\"playback_pitch\":99,\"pan\":-9,\"trim_start\":-1,\"trim_end\":0.5,\"fade_in_ms\":999999,\"midi_channel\":99,\"midi_note\":300}]}");
     CHECK_EQ(s.gridRows, 8);
     CHECK_EQ(s.gridColumns, 1);
-    CHECK_NEAR(s.masterVolumeDb, 0.0f, 0.0001f);
+    CHECK_NEAR(s.masterVolumeDb, pulsepad::VOLUME_MAX_DB, 0.0001f);
     CHECK(s.themeMode == AppThemeMode::Light);
     CHECK_EQ(s.buttons[0].color, "default");
     CHECK_NEAR(s.buttons[0].volume, 4.0f, 0.0001f);
