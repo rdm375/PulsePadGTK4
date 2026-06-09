@@ -7,7 +7,7 @@ PulsePad GTK v1 is intended for technical users who build from source.
 Supported and tested target:
 
 * Linux desktop environments with GTK support
-* The current application target builds against `gtkmm-3.0` and GStreamer 1.0 as declared in `CMakeLists.txt`.
+* The current application target builds against `gtkmm-4.0` and GStreamer 1.0 as declared in `CMakeLists.txt`.
 
 The project name is PulsePad GTK, but this source tree does not currently build a GTK4 application target. Do not install GTK4-only development packages and expect this tree to configure successfully.
 
@@ -18,7 +18,7 @@ Required to build the full desktop application with the default `PULSEPAD_BUILD_
 * C++17 compiler such as `g++` or `clang++`
 * CMake 3.16 or newer
 * pkg-config
-* gtkmm 3 development files (`gtkmm-3.0`)
+* gtkmm 4 development files (`gtkmm-4.0`)
 * GStreamer 1.0 development files (`gstreamer-1.0`)
 * libzip development files (`libzip`)
 * nlohmann_json 3.2.0 or newer

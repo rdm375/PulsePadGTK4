@@ -100,7 +100,7 @@ sudo apt install \
     build-essential \
     cmake \
     pkg-config \
-    libgtkmm-3.0-dev \
+    libgtkmm-4.0-dev \
     libgstreamer1.0-dev \
     libzip-dev \
     nlohmann-json3-dev \
