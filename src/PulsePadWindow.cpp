@@ -1,4 +1,5 @@
 #include <gtkmm.h>
+#include <gtk/gtk.h>
 #include <zip.h>
 #include "BoardConfig.h"
 #include "AudioEngine.h"
@@ -191,6 +192,8 @@ private:
     Gtk::Label statusLabel;
     Glib::RefPtr<Gtk::CssProvider> themeCssProvider;
     std::vector<Gtk::Button*> padButtons;
+    int focusedPadId = -1;
+    std::optional<SoundButton> copiedPad;
     struct ReverseJob {
         int id = -1;
         std::string storedFilename;
@@ -439,7 +442,7 @@ private:
         statusLabel.set_wrap(true);
         root.append(statusLabel );
         auto keyController = Gtk::EventControllerKey::create();
-        keyController->signal_key_pressed().connect([this](guint keyval, guint, Gdk::ModifierType) { return on_key_press(keyval); }, false);
+        keyController->signal_key_pressed().connect([this](guint keyval, guint, Gdk::ModifierType modifiers) { return on_key_press(keyval, modifiers); }, false);
         add_controller(keyController);
     }
 
@@ -449,8 +452,12 @@ private:
         return true;
     }
 
-    bool on_key_press(guint keyval) {
-        guint key = gdk_keyval_to_lower(keyval);
+    bool on_key_press(guint keyval, Gdk::ModifierType modifiers) {
+        const guint key = gdk_keyval_to_lower(keyval);
+        const bool ctrl = (static_cast<unsigned>(modifiers) & static_cast<unsigned>(Gdk::ModifierType::CONTROL_MASK)) != 0;
+        if (ctrl && key == 'c') return copy_focused_pad();
+        if (ctrl && key == 'v') return paste_to_focused_pad();
+
         for (int i = 0; i < static_cast<int>(state.buttons.size()); ++i) {
             guint padKey = state.buttons[checked_index(i)].hotkeyKeyval ? gdk_keyval_to_lower(state.buttons[checked_index(i)].hotkeyKeyval) : 0;
             if (padKey && padKey == key) return activate_if_exists(i);
@@ -776,6 +783,197 @@ entry { background: #ffffff; color: #202124; }
         refresh_ui();
     }
 
+    void import_audio_path_to_pad(int id, const std::string& selectedFile, const std::string& busyStatus, const std::string& doneStatus) {
+        if (id < 0 || id >= static_cast<int>(state.buttons.size())) return;
+        cancel_reverse_job(id);
+        remember_file_dialog_folder(fileDialogMemory.lastAudioImportDir, selectedFile);
+        SoundButton draft = state.buttons.at(checked_index(id));
+        SoundButton previous = draft;
+        set_status(busyStatus);
+        const auto rootDir = repository.root_dir();
+        auto alive = windowAlive;
+        taskRunner.submit(
+            "audio-import",
+            [rootDir, selectedFile, draft](pulsepad::CancellationToken token) {
+                if (token.cancellation_requested()) return draft;
+                BoardRepository workerRepository(rootDir);
+                return workerRepository.import_audio_for_button(draft, selectedFile);
+            },
+            [this, alive, rootDir, id, previous, doneStatus](TaskOutcome<SoundButton> outcome) mutable {
+                if (!alive->load()) return;
+                if (outcome.status == TaskStatus::Cancelled) {
+                    set_status("Audio import cancelled");
+                    return;
+                }
+                if (!outcome.succeeded()) {
+                    set_status(outcome.userMessage);
+                    return;
+                }
+                SoundButton imported = std::move(outcome.value);
+                if (id < 0 || id >= static_cast<int>(state.buttons.size())) {
+                    BoardRepository(rootDir).remove_audio_assets(imported);
+                    return;
+                }
+                imported.id = id;
+                state.buttons[checked_index(id)] = imported;
+                if (previous.storedFilename != imported.storedFilename) BoardRepository(rootDir).remove_audio_assets(previous);
+                reverseErrors.erase(id);
+                repository.save(state);
+                refresh_ui();
+                set_status(doneStatus);
+                if (imported.playbackDirection == PlaybackDirection::Reverse) ensure_reverse_ready_or_start(id);
+            });
+    }
+
+    static std::optional<std::string> first_local_file_from_uri_list(const std::string& text) {
+        std::istringstream lines(text);
+        std::string line;
+        while (std::getline(lines, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line.front() == '#') continue;
+            if (line.rfind("file://", 0) != 0) return std::nullopt;
+
+            GError* error = nullptr;
+            char* filename = g_filename_from_uri(line.c_str(), nullptr, &error);
+            if (!filename) {
+                if (error) g_error_free(error);
+                return std::nullopt;
+            }
+            std::string path(filename);
+            g_free(filename);
+            return path;
+        }
+        return std::nullopt;
+    }
+
+    bool import_dropped_audio_path(int id, const std::string& path) {
+        if (path.empty()) {
+            set_status("Only local audio files can be dropped onto pads");
+            return false;
+        }
+        import_audio_path_to_pad(id, path, "Importing dropped audio...", "Dropped audio assigned to pad");
+        return true;
+    }
+
+    struct PadDropContext {
+        PulsePadWindow* self{};
+        int id{};
+    };
+
+    static std::optional<std::string> local_path_from_gfile(GFile* file) {
+        if (!file) return std::nullopt;
+        char* rawPath = g_file_get_path(file);
+        if (!rawPath) return std::nullopt;
+        std::string path(rawPath);
+        g_free(rawPath);
+        if (path.empty()) return std::nullopt;
+        return path;
+    }
+
+    static std::optional<std::string> local_path_from_drop_value(const GValue* value) {
+        if (!value) return std::nullopt;
+
+        if (G_VALUE_HOLDS(value, G_TYPE_FILE)) {
+            return local_path_from_gfile(G_FILE(g_value_get_object(value)));
+        }
+
+#ifdef GDK_TYPE_FILE_LIST
+        if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
+            auto* fileList = static_cast<GdkFileList*>(g_value_get_boxed(value));
+            if (!fileList) return std::nullopt;
+            GSList* files = gdk_file_list_get_files(fileList);
+            std::optional<std::string> path;
+            if (files && files->data) path = local_path_from_gfile(G_FILE(files->data));
+            g_slist_free(files);
+            return path;
+        }
+#endif
+
+        if (G_VALUE_HOLDS(value, G_TYPE_STRING)) {
+            const char* text = g_value_get_string(value);
+            if (!text) return std::nullopt;
+            return first_local_file_from_uri_list(text);
+        }
+
+        return std::nullopt;
+    }
+
+    static gboolean on_pad_file_drop(GtkDropTarget*, const GValue* value, double, double, gpointer userData) {
+        auto* context = static_cast<PadDropContext*>(userData);
+        if (!context || !context->self) return FALSE;
+
+        const auto path = local_path_from_drop_value(value);
+        if (!path || path->empty()) {
+            context->self->set_status("Only local audio files can be dropped onto pads");
+            return FALSE;
+        }
+
+        context->self->focusedPadId = context->id;
+        return context->self->import_dropped_audio_path(context->id, *path) ? TRUE : FALSE;
+    }
+
+    static void destroy_pad_drop_context(gpointer userData, GClosure*) {
+        delete static_cast<PadDropContext*>(userData);
+    }
+
+    void add_audio_drop_target(Gtk::Widget& widget, int id) {
+        auto* target = gtk_drop_target_new(G_TYPE_INVALID, GDK_ACTION_COPY);
+        std::vector<GType> acceptedTypes;
+        acceptedTypes.push_back(G_TYPE_FILE);
+#ifdef GDK_TYPE_FILE_LIST
+        acceptedTypes.push_back(GDK_TYPE_FILE_LIST);
+#endif
+        acceptedTypes.push_back(G_TYPE_STRING);
+        gtk_drop_target_set_gtypes(target, acceptedTypes.data(), static_cast<gsize>(acceptedTypes.size()));
+
+        auto* context = new PadDropContext{this, id};
+        g_signal_connect_data(target,
+                              "drop",
+                              G_CALLBACK(&PulsePadWindow::on_pad_file_drop),
+                              context,
+                              &PulsePadWindow::destroy_pad_drop_context,
+                              static_cast<GConnectFlags>(0));
+        gtk_widget_add_controller(widget.gobj(), GTK_EVENT_CONTROLLER(target));
+    }
+
+    bool copy_focused_pad() {
+        if (focusedPadId < 0 || focusedPadId >= static_cast<int>(state.buttons.size())) {
+            set_status("Focus a pad before copying");
+            return true;
+        }
+        copiedPad = state.buttons.at(checked_index(focusedPadId));
+        set_status("Copied pad " + std::to_string(focusedPadId + 1));
+        return true;
+    }
+
+    bool paste_to_focused_pad() {
+        if (!copiedPad) {
+            set_status("No pad copied yet");
+            return true;
+        }
+        if (focusedPadId < 0 || focusedPadId >= static_cast<int>(state.buttons.size())) {
+            set_status("Focus a destination pad before pasting");
+            return true;
+        }
+        const int targetId = focusedPadId;
+        const SoundButton previous = state.buttons.at(checked_index(targetId));
+        try {
+            SoundButton pasted = repository.duplicate_button_audio_for_pad(*copiedPad, targetId);
+            state.buttons[checked_index(targetId)] = pasted;
+            if (previous.storedFilename != pasted.storedFilename) repository.remove_audio_assets(previous);
+            cancel_reverse_job(targetId);
+            reverseErrors.erase(targetId);
+            repository.save(state);
+            refresh_ui();
+            set_status("Pasted pad " + std::to_string(copiedPad->id + 1) + " to pad " + std::to_string(targetId + 1));
+            if (pasted.assigned && pasted.playbackDirection == PlaybackDirection::Reverse) ensure_reverse_ready_or_start(targetId);
+        } catch (const std::exception& ex) {
+            set_status(ex.what());
+        }
+        return true;
+    }
+
+
     void toggle_theme_mode() {
         state.themeMode = (state.themeMode == AppThemeMode::Light) ? AppThemeMode::Dark : AppThemeMode::Light;
         state.status = "Theme: " + to_string(state.themeMode);
@@ -794,14 +992,23 @@ entry { background: #ffffff; color: #202124; }
             btn->set_vexpand(true);
             btn->set_size_request(130, 130);
             btn->get_style_context()->add_class("pad-button");
-            btn->signal_clicked().connect([this, i]() { primary_activate_button(i); });
+            btn->signal_clicked().connect([this, i]() { focusedPadId = i; primary_activate_button(i); });
+
+            auto focusController = Gtk::EventControllerFocus::create();
+            focusController->signal_enter().connect([this, i]() { focusedPadId = i; });
+            btn->add_controller(focusController);
+
             auto rightClick = Gtk::GestureClick::create();
             rightClick->set_button(3);
             rightClick->signal_pressed().connect([this, i](int, double, double) {
+                focusedPadId = i;
                 // Defer the editor until after GTK finishes handling the click.
                 Glib::signal_idle().connect_once([this, i]() { edit_button(i); });
             });
             btn->add_controller(rightClick);
+
+            add_audio_drop_target(*btn, i);
+
             grid.attach(*btn, i % state.gridColumns, i / state.gridColumns, 1, 1);
             padButtons.push_back(btn);
         }
@@ -2301,6 +2508,7 @@ entry { background: #ffffff; color: #202124; }
 #include "PulsePadWindow.h"
 
 int run_pulsepad_app(int argc, char** argv) {
+    Gio::init();
     auto app = Gtk::Application::create("org.pulsepad.gtk");
     return app->make_window_and_run<PulsePadWindow>(argc, argv);
 }

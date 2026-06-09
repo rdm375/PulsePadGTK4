@@ -244,6 +244,28 @@ SoundButton BoardRepository::import_audio_for_button(const SoundButton& button, 
     return b;
 }
 
+SoundButton BoardRepository::duplicate_button_audio_for_pad(const SoundButton& source, int targetId) const {
+    SoundButton copy = source;
+    copy.id = targetId;
+    if (!source.assigned || source.storedFilename.empty()) {
+        return copy;
+    }
+
+    const auto input = sound_file(source);
+    if (!fs::exists(input) || fs::file_size(input) == 0) throw std::runtime_error("Cannot paste pad: source audio asset is missing");
+
+    const std::string baseName = source.originalFilename.empty() ? source.storedFilename : source.originalFilename;
+    const auto stored = "button-" + std::to_string(targetId) + "-" + unique_token() + "-" + sanitize_filename(baseName);
+    const auto outFile = sounds_dir() / stored;
+    fs::create_directories(sounds_dir());
+    fs::copy_file(input, outFile, fs::copy_options::none);
+    if (!fs::exists(outFile) || fs::file_size(outFile) == 0) throw std::runtime_error("Pasted audio could not be copied");
+
+    copy.storedFilename = stored;
+    copy.relativePathOrAssetReference = "sounds/" + stored;
+    return copy;
+}
+
 fs::path BoardRepository::ensure_reverse_audio_for_button(const SoundButton& button, const std::atomic<bool>* cancelFlag) const {
     if (!button.assigned || button.storedFilename.empty()) throw std::runtime_error("No audio assigned");
     const auto input = sound_file(button);

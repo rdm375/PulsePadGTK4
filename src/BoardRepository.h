@@ -39,6 +39,7 @@ public:
     void clear_all_audio_assets() const;
     std::string default_label_for(const SoundButton& button) const;
     SoundButton import_audio_for_button(const SoundButton& button, const std::filesystem::path& selectedFile) const;
+    SoundButton duplicate_button_audio_for_pad(const SoundButton& source, int targetId) const;
     std::filesystem::path ensure_reverse_audio_for_button(const SoundButton& button, const std::atomic<bool>* cancelFlag = nullptr) const;
     void remove_audio_assets(const SoundButton& button) const;
     SoundButton clear_audio(const SoundButton& button) const;
