@@ -409,28 +409,15 @@ private:
         toolbar.append(importButton );
         toolbar.append(exportButton );
         toolbar.append(settingsButton );
-        root.append(toolbar );
 
         importButton.signal_clicked().connect(sigc::mem_fun(*this, &PulsePadWindow::on_import_board));
         exportButton.signal_clicked().connect(sigc::mem_fun(*this, &PulsePadWindow::on_export_board));
         settingsButton.signal_clicked().connect(sigc::mem_fun(*this, &PulsePadWindow::open_settings_dialog));
 
-        padScroller.set_hexpand(true);
-        padScroller.set_vexpand(true);
-        padScroller.set_policy(Gtk::PolicyType::AUTOMATIC, Gtk::PolicyType::AUTOMATIC);
-        padScroller.set_child(grid);
-        root.append(padScroller );
-
-        grid.set_hexpand(true);
-        grid.set_vexpand(false);
-        grid.set_row_spacing(10);
-        grid.set_column_spacing(10);
-        rebuild_pad_grid();
 
         ui::setup_icon_button(stopButton, "media-playback-stop", "Stop all");
         stopButton.set_tooltip_text("Stop all currently playing pads");
         stopButton.signal_clicked().connect([this]() { audio.stop_all_with_fade(); set_status("All playback stopped"); refresh_mixer_ui(); });
-        bottom.append(stopButton );
         auto* volumeBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 4);
         volumeBox->set_hexpand(true);
         masterScale.set_hexpand(true);
@@ -448,8 +435,21 @@ private:
         masterScale.signal_value_changed().connect([this]() { set_master_volume_db(static_cast<float>(masterScale.get_value())); });
         volumeBox->append(masterLabel );
         volumeBox->append(masterScale );
-        bottom.append(*volumeBox );
-        root.append(bottom );
+        toolbar.append(stopButton );
+        toolbar.append(*volumeBox );
+        root.append(toolbar );
+
+        padScroller.set_hexpand(true);
+        padScroller.set_vexpand(true);
+        padScroller.set_policy(Gtk::PolicyType::AUTOMATIC, Gtk::PolicyType::AUTOMATIC);
+        padScroller.set_child(grid);
+        root.append(padScroller );
+
+        grid.set_hexpand(true);
+        grid.set_vexpand(false);
+        grid.set_row_spacing(10);
+        grid.set_column_spacing(10);
+        rebuild_pad_grid();
 
         mixerExpander.set_expanded(false);
         mixerEmptyLabel.set_xalign(0.0f);
