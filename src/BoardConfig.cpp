@@ -111,7 +111,6 @@ NormalizationMode normalization_mode_from_string(const std::string& value) {
     std::string v = value;
     std::transform(v.begin(), v.end(), v.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (v == "trimmed" || v == "trimmedregion" || v == "trimmed_region" || v == "trimmed-region") return NormalizationMode::TrimmedRegion;
-    if (v == "entire" || v == "entirefile" || v == "entire_file" || v == "entire-file" || v == "fullfile" || v == "full_file") return NormalizationMode::TrimmedRegion;
     return NormalizationMode::Off;
 }
 

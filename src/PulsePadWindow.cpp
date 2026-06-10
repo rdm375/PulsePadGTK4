@@ -1381,10 +1381,11 @@ entry { background: #ffffff; color: #202124; }
             state.status = "Grid: " + std::to_string(state.gridRows) + " x " + std::to_string(state.gridColumns);
         }
 
-        bool midiChanged = state.midiEnabled != midiEnable.get_active() || state.midiPortName != midiPortCombo.get_active_id();
+        const std::string activeMidiPortId = midiPortCombo.get_active_id();
+        bool midiChanged = state.midiEnabled != midiEnable.get_active() || state.midiPortName != activeMidiPortId;
         if (midiChanged) {
             state.midiEnabled = midiEnable.get_active();
-            state.midiPortName = midiPortCombo.get_active_id();
+            state.midiPortName = activeMidiPortId;
             open_configured_midi_port();
             if (state.midiEnabled && !state.midiPortName.empty()) state.status = "MIDI input: " + state.midiPortName;
             else if (!state.midiEnabled) state.status = "MIDI input disabled";
