@@ -183,6 +183,7 @@ private:
 
     Gtk::Box root{Gtk::Orientation::VERTICAL, 12};
     Gtk::Box toolbar{Gtk::Orientation::HORIZONTAL, 8};
+    Gtk::ScrolledWindow padScroller;
     Gtk::Grid grid;
     Gtk::Box bottom{Gtk::Orientation::HORIZONTAL, 12};
     Gtk::Expander mixerExpander{"Mixer / Currently Playing"};
@@ -414,9 +415,16 @@ private:
         exportButton.signal_clicked().connect(sigc::mem_fun(*this, &PulsePadWindow::on_export_board));
         settingsButton.signal_clicked().connect(sigc::mem_fun(*this, &PulsePadWindow::open_settings_dialog));
 
+        padScroller.set_hexpand(true);
+        padScroller.set_vexpand(true);
+        padScroller.set_policy(Gtk::PolicyType::AUTOMATIC, Gtk::PolicyType::AUTOMATIC);
+        padScroller.set_child(grid);
+        root.append(padScroller );
+
+        grid.set_hexpand(true);
+        grid.set_vexpand(false);
         grid.set_row_spacing(10);
         grid.set_column_spacing(10);
-        root.append(grid );
         rebuild_pad_grid();
 
         ui::setup_icon_button(stopButton, "media-playback-stop", "Stop all");
