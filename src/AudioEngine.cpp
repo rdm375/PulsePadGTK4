@@ -57,6 +57,7 @@ public:
         bool reportedRuntimeIssue = false;
         std::string groupName;
         float buttonVolume = 1.0f;
+        float normalizationGain = 1.0f;
         float duckDb = 0.0f;
         int duckFadeMs = 0;
         float speed = 1.0f;
@@ -95,7 +96,7 @@ public:
         return std::nullopt;
     }
 
-    void play(int key, const fs::path& file, float volume, float speed, float pitch, PlaybackMode mode, float pan, const std::string& groupName, double trimStart, double trimEnd, int fadeInMs, int fadeOutMs, std::function<void(std::string)> onFailure) {
+    void play(int key, const fs::path& file, float volume, float normalizationGain, float speed, float pitch, PlaybackMode mode, float pan, const std::string& groupName, double trimStart, double trimEnd, int fadeInMs, int fadeOutMs, std::function<void(std::string)> onFailure) {
         if (std::abs(clampf(pitch, 0.5f, 2.0f) - 1.0f) > 0.001f) {
             onFailure("Playback pitch is preserved for config compatibility but is not supported at runtime; playing at normal pitch");
         }
@@ -111,6 +112,7 @@ public:
         handle->filePath = file.string();
         handle->groupName = normalize_group_name(groupName);
         handle->buttonVolume = clamp_pad_volume(volume);
+        handle->normalizationGain = clampf(normalizationGain, 0.0f, 16.0f);
         handle->speed = clamp_playback_speed(speed);
         handle->trimStart = clamp_time_seconds(trimStart);
         handle->trimEnd = clamp_time_seconds(trimEnd);
@@ -158,7 +160,7 @@ public:
             onFailure("Could not convert audio path to URI");
             return;
         }
-        float initialVolume = handle->fadeInMs > 0 ? 0.0f : static_cast<float>(effective_volume(handle->buttonVolume));
+        float initialVolume = handle->fadeInMs > 0 ? 0.0f : static_cast<float>(effective_volume(handle->buttonVolume, handle->duckDb, handle->normalizationGain));
         g_object_set(handle->playbin, "uri", uri.c_str(), "volume", handle->ampElement ? 1.0 : initialVolume, "audio-sink", audioSink, nullptr);
         set_handle_gain(handle, initialVolume);
         GstBus* bus = gst_element_get_bus(handle->playbin);
@@ -230,7 +232,7 @@ public:
 
     void set_master_volume(float value) {
         masterVolume = clamp_pad_volume(value);
-        for (auto& p : players) set_handle_gain(p, effective_volume(p->buttonVolume, p->duckDb));
+        for (auto& p : players) set_handle_gain(p, effective_volume(p->buttonVolume, p->duckDb, p->normalizationGain));
     }
 
     float master_volume() const { return masterVolume; }
@@ -240,7 +242,7 @@ public:
         for (auto& p : players) {
             if (p->key == key) {
                 p->buttonVolume = v;
-                set_handle_gain(p, effective_volume(v, p->duckDb));
+                set_handle_gain(p, effective_volume(v, p->duckDb, p->normalizationGain));
             }
         }
     }
@@ -297,9 +299,9 @@ private:
     std::vector<std::shared_ptr<PlayerHandle>> players;
     std::map<int, std::shared_ptr<PlayerHandle>> retriggerPlayers;
 
-    double effective_volume(float buttonVolume, float duckDb = 0.0f) const {
+    double effective_volume(float buttonVolume, float duckDb = 0.0f, float normalizationGain = 1.0f) const {
         double duckLinear = std::pow(10.0, clamp_duck_db(duckDb) / 20.0);
-        return clampf(static_cast<float>(masterVolume * clamp_pad_volume(buttonVolume) * duckLinear), 0.0f, 4.0f);
+        return clampf(static_cast<float>(masterVolume * clampf(normalizationGain, 0.0f, 16.0f) * clamp_pad_volume(buttonVolume) * duckLinear), 0.0f, 4.0f);
     }
 
     void set_handle_gain(const std::shared_ptr<PlayerHandle>& handle, double gain) {
@@ -375,7 +377,7 @@ private:
         targetDb = clamp_duck_db(targetDb);
         if (fadeMs <= 0) {
             handle->duckDb = targetDb;
-            set_handle_gain(handle, effective_volume(handle->buttonVolume, handle->duckDb));
+            set_handle_gain(handle, effective_volume(handle->buttonVolume, handle->duckDb, handle->normalizationGain));
             return;
         }
         auto weakHandle = std::weak_ptr<PlayerHandle>(handle);
@@ -389,7 +391,7 @@ private:
             ++(*step);
             float t = std::min(1.0f, static_cast<float>(*step) / static_cast<float>(steps));
             h->duckDb = startDb + (targetDb - startDb) * t;
-            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb));
+            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb, h->normalizationGain));
             return *step < steps;
         }, intervalMs);
     }
@@ -405,7 +407,7 @@ private:
             if (!h || !h->playbin || h->stopping) return false;
             ++(*step);
             float t = std::min(1.0f, static_cast<float>(*step) / static_cast<float>(steps));
-            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb) * t);
+            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb, h->normalizationGain) * t);
             return *step < steps;
         }, intervalMs);
     }
@@ -421,7 +423,7 @@ private:
             if (!h || !h->playbin) return false;
             ++(*step);
             float t = 1.0f - std::min(1.0f, static_cast<float>(*step) / static_cast<float>(steps));
-            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb) * t);
+            set_handle_gain(h, effective_volume(h->buttonVolume, h->duckDb, h->normalizationGain) * t);
             if (*step >= steps) {
                 finish_handle(h);
                 return false;
@@ -554,11 +556,11 @@ AudioEngine::~AudioEngine() = default;
 AudioEngine::AudioEngine(AudioEngine&&) noexcept = default;
 AudioEngine& AudioEngine::operator=(AudioEngine&&) noexcept = default;
 
-void AudioEngine::play(int key, const std::filesystem::path& file, float volume, float speed, float pitch,
+void AudioEngine::play(int key, const std::filesystem::path& file, float volume, float normalizationGain, float speed, float pitch,
                        PlaybackMode mode, float pan, const std::string& groupName, double trimStart,
                        double trimEnd, int fadeInMs, int fadeOutMs,
                        std::function<void(std::string)> onFailure) {
-    impl_->play(key, file, volume, speed, pitch, mode, pan, groupName, trimStart, trimEnd, fadeInMs, fadeOutMs, std::move(onFailure));
+    impl_->play(key, file, volume, normalizationGain, speed, pitch, mode, pan, groupName, trimStart, trimEnd, fadeInMs, fadeOutMs, std::move(onFailure));
 }
 
 void AudioEngine::stop_all() { impl_->stop_all(); }

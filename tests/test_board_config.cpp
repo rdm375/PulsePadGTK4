@@ -165,6 +165,83 @@ static void test_invalid_values_default_or_clamp() {
     CHECK_EQ(s.buttons[0].midiNote, -1);
 }
 
+
+static void test_normalization_config_and_helpers() {
+    auto s = populated_board();
+    auto& b = s.buttons[0];
+    b.normalizationMode = NormalizationMode::TrimmedRegion;
+    b.measuredLufs = -23.0;
+    b.measuredPeakDb = -4.0;
+    b.normalizationGainDb = 3.0;
+    b.analysisRegionStart = 0.125;
+    b.analysisRegionEnd = 2.5;
+    b.analysisSourceFile = "sounds/kick.wav";
+    b.analysisSourceTimestamp = "12345";
+    b.analysisValid = true;
+    auto decoded = decode_board_config(encode_board_config(s));
+    const auto& out = decoded.buttons[0];
+    CHECK(out.normalizationMode == NormalizationMode::TrimmedRegion);
+    CHECK_NEAR(out.measuredLufs, -23.0, 0.0001);
+    CHECK_NEAR(out.measuredPeakDb, -4.0, 0.0001);
+    CHECK_NEAR(out.normalizationGainDb, 3.0, 0.0001);
+    CHECK_NEAR(out.analysisRegionStart, 0.125, 0.0001);
+    CHECK_NEAR(out.analysisRegionEnd, 2.5, 0.0001);
+    CHECK_EQ(out.analysisSourceFile, "sounds/kick.wav");
+    CHECK(out.analysisValid);
+}
+
+static void test_normalization_mode_ui_ids_parse() {
+    CHECK(normalization_mode_from_string("off") == NormalizationMode::Off);
+    CHECK(normalization_mode_from_string("trimmed") == NormalizationMode::TrimmedRegion);
+    CHECK(normalization_mode_from_string("entire") == NormalizationMode::EntireFile);
+    CHECK(normalization_mode_from_string("TrimmedRegion") == NormalizationMode::TrimmedRegion);
+    CHECK(normalization_mode_from_string("EntireFile") == NormalizationMode::EntireFile);
+}
+
+static void test_normalization_regions_and_invalidation() {
+    SoundButton b = default_button(0);
+    b.durationSeconds = 10.0;
+    b.trimStart = 2.0;
+    b.trimEnd = 6.0;
+    b.normalizationMode = NormalizationMode::TrimmedRegion;
+    auto trimmed = normalization_analysis_region(b);
+    CHECK_NEAR(trimmed.first, 2.0, 0.0001);
+    CHECK_NEAR(trimmed.second, 6.0, 0.0001);
+
+    b.normalizationMode = NormalizationMode::EntireFile;
+    auto full = normalization_analysis_region(b);
+    CHECK_NEAR(full.first, 0.0, 0.0001);
+    CHECK_NEAR(full.second, 10.0, 0.0001);
+
+    b.normalizationMode = NormalizationMode::TrimmedRegion;
+    b.trimStart = 0.0;
+    b.trimEnd = 0.0;
+    auto untrimmed = normalization_analysis_region(b);
+    CHECK_NEAR(untrimmed.first, 0.0, 0.0001);
+    CHECK_NEAR(untrimmed.second, 10.0, 0.0001);
+
+    b.analysisValid = true;
+    b.analysisFailed = true;
+    b.measuredLufs = -20.0;
+    b.normalizationGainDb = 2.0;
+    invalidate_normalization_analysis(b);
+    CHECK(!b.analysisValid);
+    CHECK(!b.analysisFailed);
+    CHECK_NEAR(b.normalizationGainDb, 0.0, 0.0001);
+}
+
+static void test_normalization_gain_is_peak_limited() {
+    CHECK_NEAR(calculate_normalization_gain_db(-18.0, -24.0, -1.0, -10.0), 6.0, 0.0001);
+    CHECK_NEAR(calculate_normalization_gain_db(-18.0, -30.0, -1.0, -3.0), 2.0, 0.0001);
+    SoundButton b = default_button(0);
+    b.normalizationMode = NormalizationMode::TrimmedRegion;
+    b.analysisValid = true;
+    b.normalizationGainDb = 6.0;
+    CHECK_NEAR(normalization_gain_linear(b), std::pow(10.0, 6.0 / 20.0), 0.0001);
+    b.normalizationMode = NormalizationMode::Off;
+    CHECK_NEAR(normalization_gain_linear(b), 1.0, 0.0001);
+}
+
 static void test_corrupt_config_fails_without_generating_replacement() {
     CHECK_THROWS(decode_board_config("{ this is not json"));
     CHECK_THROWS(decode_board_config(""));
@@ -250,6 +327,10 @@ int main() {
     test_empty_and_minimal_configs();
     test_invalid_values_default_or_clamp();
     test_playback_config_migration();
+    test_normalization_config_and_helpers();
+    test_normalization_mode_ui_ids_parse();
+    test_normalization_regions_and_invalidation();
+    test_normalization_gain_is_peak_limited();
     test_corrupt_config_fails_without_generating_replacement();
     test_filename_sanitization();
     test_import_path_validation();

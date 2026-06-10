@@ -60,7 +60,7 @@ public:
     AudioEngine(AudioEngine&&) noexcept;
     AudioEngine& operator=(AudioEngine&&) noexcept;
 
-    void play(int key, const std::filesystem::path& file, float volume, float speed, float pitch,
+    void play(int key, const std::filesystem::path& file, float volume, float normalizationGain, float speed, float pitch,
               PlaybackMode mode, float pan, const std::string& groupName, double trimStart,
               double trimEnd, int fadeInMs, int fadeOutMs,
               std::function<void(std::string)> onFailure);

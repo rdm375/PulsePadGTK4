@@ -18,6 +18,7 @@ enum class PlaybackMode { PlayThrough, Loop, Retrigger };
 enum class PlaybackDirection { Forward, Reverse };
 enum class PadGroupType { Play, Exclusive };
 enum class GroupTransition { Stop, Fade, Crossfade };
+enum class NormalizationMode { Off, TrimmedRegion, EntireFile };
 
 struct PadGroup {
     std::string name;
@@ -59,6 +60,16 @@ struct SoundButton {
     PlaybackDirection playbackDirection = PlaybackDirection::Forward;
     bool assigned = false;
     bool userRenamed = false;
+    NormalizationMode normalizationMode = NormalizationMode::Off;
+    double measuredLufs = 0.0;
+    double measuredPeakDb = 0.0;
+    double normalizationGainDb = 0.0;
+    double analysisRegionStart = 0.0;
+    double analysisRegionEnd = 0.0;
+    std::string analysisSourceFile;
+    std::string analysisSourceTimestamp;
+    bool analysisValid = false;
+    bool analysisFailed = false;
 };
 
 struct BoardState {
@@ -100,11 +111,18 @@ std::string display_label(PlaybackMode m);
 std::string display_label(PlaybackDirection d);
 std::string to_string(PadGroupType type);
 std::string to_string(GroupTransition transition);
+std::string to_string(NormalizationMode mode);
 AppThemeMode theme_from_string(const std::string& s);
 PlaybackMode playback_from_string(const std::string& s, bool loop_fallback = false);
 PlaybackDirection direction_from_string(const std::string& s);
 PadGroupType group_type_from_string(const std::string& value);
 GroupTransition group_transition_from_string(const std::string& value);
+NormalizationMode normalization_mode_from_string(const std::string& value);
+std::string display_label(NormalizationMode mode);
+void invalidate_normalization_analysis(SoundButton& b);
+std::pair<double, double> normalization_analysis_region(const SoundButton& b);
+double calculate_normalization_gain_db(double targetLufs, double measuredLufs, double peakCeilingDb, double measuredPeakDb);
+double normalization_gain_linear(const SoundButton& b);
 std::string default_button_label(int id);
 SoundButton default_button(int id);
 std::vector<SoundButton> default_buttons(int count = 9);

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <regex>
 #include <sstream>
 
 namespace pulsepad {
@@ -59,6 +60,95 @@ std::vector<double> generate_waveform_peaks(const std::filesystem::path& file, d
         ++sampleIndex;
     }
     return peaks;
+}
+
+
+std::string file_timestamp_for_analysis(const std::filesystem::path& file) {
+    try {
+        auto t = std::filesystem::last_write_time(file).time_since_epoch().count();
+        std::ostringstream ss;
+        ss << t;
+        return ss.str();
+    } catch (...) {
+        return {};
+    }
+}
+
+static bool parse_last_number_after_label(const std::string& text, const std::string& label, double& out) {
+    std::regex pattern(label + R"(\s*:\s*(-?(?:\d+(?:\.\d*)?|\.\d+)))", std::regex::icase);
+    bool found = false;
+    for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+        try {
+            out = std::stod((*it)[1].str());
+            found = true;
+        } catch (...) {}
+    }
+    return found;
+}
+
+LoudnessAnalysisResult analyze_loudness_with_ffmpeg(const std::filesystem::path& file, double regionStart, double regionEnd, double targetLufs, double peakCeilingDb) {
+    LoudnessAnalysisResult out;
+    out.regionStart = clamp_time_seconds(regionStart);
+    out.regionEnd = clamp_time_seconds(regionEnd);
+    out.sourceFile = file.string();
+    out.sourceTimestamp = file_timestamp_for_analysis(file);
+
+    if (!ffmpeg_available()) {
+        out.errorMessage = "ffmpeg is required for loudness analysis";
+        return out;
+    }
+    if (!std::filesystem::exists(file)) {
+        out.errorMessage = "audio file not found";
+        return out;
+    }
+
+    std::vector<std::string> args{"ffmpeg", "-nostdin", "-hide_banner", "-nostats", "-v", "info"};
+    if (out.regionStart > 0.0) {
+        std::ostringstream ss;
+        ss << std::fixed << std::setprecision(3) << out.regionStart;
+        args.push_back("-ss");
+        args.push_back(ss.str());
+    }
+    if (out.regionEnd > out.regionStart) {
+        std::ostringstream tt;
+        tt << std::fixed << std::setprecision(3) << (out.regionEnd - out.regionStart);
+        args.push_back("-t");
+        args.push_back(tt.str());
+    }
+    args.push_back("-i");
+    args.push_back(file.string());
+    args.push_back("-vn");
+    args.push_back("-filter_complex");
+    args.push_back("ebur128=peak=sample");
+    args.push_back("-f");
+    args.push_back("null");
+    args.push_back("-");
+
+    SubprocessOptions options;
+    options.maxStdoutBytes = 4096;
+    options.maxStderrBytes = 512 * 1024;
+    options.timeoutMs = 60000;
+    auto result = run_subprocess(args, options);
+    if (!result.success()) {
+        out.errorMessage = subprocess_error_summary("ffmpeg", result);
+        return out;
+    }
+
+    double integrated = 0.0;
+    double peak = 0.0;
+    const bool haveLufs = parse_last_number_after_label(result.stderrText, "I", integrated);
+    bool havePeak = parse_last_number_after_label(result.stderrText, "Peak", peak);
+    if (!havePeak) havePeak = parse_last_number_after_label(result.stderrText, "Sample peak", peak);
+    if (!haveLufs || !havePeak || !std::isfinite(integrated) || !std::isfinite(peak)) {
+        out.errorMessage = "ffmpeg did not report integrated loudness and sample peak";
+        return out;
+    }
+
+    out.measuredLufs = integrated;
+    out.measuredPeakDb = peak;
+    out.normalizationGainDb = calculate_normalization_gain_db(targetLufs, integrated, peakCeilingDb, peak);
+    out.ok = true;
+    return out;
 }
 
 std::string format_seconds(double seconds) {

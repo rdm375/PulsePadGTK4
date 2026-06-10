@@ -77,12 +77,19 @@ using pulsepad::ensure_button_count;
 using pulsepad::group_transition_from_string;
 using pulsepad::group_type_from_string;
 using pulsepad::generate_waveform_peaks;
+using pulsepad::analyze_loudness_with_ffmpeg;
+using pulsepad::file_timestamp_for_analysis;
 using pulsepad::TaskHandle;
 using pulsepad::TaskOutcome;
 using pulsepad::TaskRunner;
 using pulsepad::TaskStatus;
 using pulsepad::normalize_group_name;
 using pulsepad::normalize_pad_color;
+using pulsepad::normalization_gain_linear;
+using pulsepad::NormalizationMode;
+using pulsepad::normalization_mode_from_string;
+using pulsepad::normalization_analysis_region;
+using pulsepad::invalidate_normalization_analysis;
 using pulsepad::playback_from_string;
 using pulsepad::sanitize_filename;
 using pulsepad::theme_from_string;
@@ -1449,7 +1456,7 @@ entry { background: #ffffff; color: #202124; }
                 playTrimEnd = 0.0;
             }
             int effectiveFadeInMs = (is_exclusive_group(b.exclusiveGroup) && groupTransition == GroupTransition::Crossfade) ? groupFadeInMs : b.fadeInMs;
-            audio.play(b.id, file, b.volume, b.playbackSpeed, b.playbackPitch, b.playbackMode, b.pan, b.exclusiveGroup, playTrimStart, playTrimEnd, effectiveFadeInMs, b.fadeOutMs,
+            audio.play(b.id, file, b.volume, static_cast<float>(normalization_gain_linear(b)), b.playbackSpeed, b.playbackPitch, b.playbackMode, b.pan, b.exclusiveGroup, playTrimStart, playTrimEnd, effectiveFadeInMs, b.fadeOutMs,
                        [this](const std::string& msg) { Glib::signal_idle().connect_once([this, msg]() { set_status(msg); }); });
             set_status(b.playbackDirection == PlaybackDirection::Reverse ? "Reverse audio playback started" : "Audio playback started");
             refresh_playing_state_until_stopped(b.id);
@@ -1708,10 +1715,34 @@ entry { background: #ffffff; color: #202124; }
         playbackBox->append(speed );
         playbackBox->append(panLabel );
         playbackBox->append(pan );
+        auto* loudnessBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
+        ::set_margin(*loudnessBox, 10);
+        Gtk::Label normalizationCaption("Mode");
+        normalizationCaption.set_xalign(0.0f);
+        Gtk::ComboBoxText normalizationCombo;
+        normalizationCombo.append("off", display_label(NormalizationMode::Off));
+        normalizationCombo.append("trimmed", display_label(NormalizationMode::TrimmedRegion));
+        normalizationCombo.append("entire", display_label(NormalizationMode::EntireFile));
+        if (b.normalizationMode == NormalizationMode::TrimmedRegion) normalizationCombo.set_active_id("trimmed");
+        else if (b.normalizationMode == NormalizationMode::EntireFile) normalizationCombo.set_active_id("entire");
+        else normalizationCombo.set_active_id("off");
+        normalizationCombo.set_tooltip_text("Apply cached automatic loudness gain before the manual pad volume");
+        Gtk::Label normalizationInfo;
+        normalizationInfo.set_xalign(0.0f);
+        normalizationInfo.set_wrap(true);
+
         playbackBox->append(fadeInLabel );
         playbackBox->append(fadeIn );
         playbackBox->append(fadeOutLabel );
         playbackBox->append(fadeOut );
+
+        Gtk::Label loudnessHelp("Automatic gain is applied after the trim region and before the manual pad volume. Analysis is cached in the project and does not modify audio files.");
+        loudnessHelp.set_xalign(0.0f);
+        loudnessHelp.set_wrap(true);
+        loudnessBox->append(loudnessHelp );
+        loudnessBox->append(normalizationCaption );
+        loudnessBox->append(normalizationCombo );
+        loudnessBox->append(normalizationInfo );
 
         auto* trimBox = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 8);
         ::set_margin(*trimBox, 10);
@@ -2040,6 +2071,20 @@ entry { background: #ffffff; color: #202124; }
             panLabel.set_text("Pan: " + ps.str() + " (" + side + ")");
             fadeInLabel.set_text("Fade in: " + std::to_string(static_cast<int>(fadeIn.get_value())) + " ms");
             fadeOutLabel.set_text("Fade out: " + std::to_string(static_cast<int>(fadeOut.get_value())) + " ms");
+            std::ostringstream ns;
+            const auto activeNorm = normalizationCombo.get_active_id();
+            NormalizationMode visibleMode = normalization_mode_from_string(activeNorm.empty() ? "Off" : activeNorm);
+            ns << "Mode: " << display_label(visibleMode) << "\n";
+            if (b.analysisValid) {
+                ns << std::fixed << std::setprecision(2)
+                   << "Measured LUFS: " << b.measuredLufs << "\n"
+                   << "Sample peak: " << b.measuredPeakDb << " dBFS\n"
+                   << "Auto gain: " << b.normalizationGainDb << " dB\n";
+            } else {
+                ns << "Measured LUFS: pending\nSample peak: pending\nAuto gain: 0 dB\n";
+            }
+            ns << "Analysis status: " << (b.analysisFailed ? "failed" : (b.analysisValid ? "valid" : "pending"));
+            normalizationInfo.set_text(ns.str());
             hotkeyLabel.set_text("Hotkey: " + (learnedHotkeyKeyval ? learnedHotkeyLabel : std::string("None")));
             midiLabel.set_text("MIDI: " + format_midi_trigger(learnedMidiChannel, learnedMidiNote));
 
@@ -2099,6 +2144,10 @@ entry { background: #ffffff; color: #202124; }
         ::set_margin(*trimTab, 10);
         trimTab->append(*make_section("Trim", *trimBox) );
 
+        auto* loudnessTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
+        ::set_margin(*loudnessTab, 10);
+        loudnessTab->append(*make_section("Loudness Normalization", *loudnessBox) );
+
         auto* advancedTab = Gtk::make_managed<Gtk::Box>(Gtk::Orientation::VERTICAL, 10);
         ::set_margin(*advancedTab, 10);
         advancedTab->append(*make_section("Status", *statusBox) );
@@ -2106,6 +2155,7 @@ entry { background: #ffffff; color: #202124; }
         notebook->append_page(*padTab, "Pad");
         notebook->append_page(*playbackTab, "Playback");
         notebook->append_page(*trimTab, "Trim");
+        notebook->append_page(*loudnessTab, "Loudness");
         notebook->append_page(*advancedTab, "Advanced");
         box->append(*notebook );
 
@@ -2123,6 +2173,83 @@ entry { background: #ffffff; color: #202124; }
             }
         };
 
+        TaskHandle normalizationTask;
+        auto ensureNormalizationAnalysis = [&]() {
+            auto normId = normalizationCombo.get_active_id();
+            if (normId == "trimmed") b.normalizationMode = NormalizationMode::TrimmedRegion;
+            else if (normId == "entire") b.normalizationMode = NormalizationMode::EntireFile;
+            else b.normalizationMode = NormalizationMode::Off;
+
+            b.trimStart = clamp_time_seconds(trimStart.get_value());
+            b.trimEnd = clamp_time_seconds(trimEnd.get_value());
+            if (b.assigned && b.durationSeconds > 0.0) {
+                b.trimStart = std::min(b.trimStart, b.durationSeconds);
+                b.trimEnd = std::min(b.trimEnd, b.durationSeconds);
+                if (b.trimEnd <= b.trimStart) { b.trimStart = 0.0; b.trimEnd = b.durationSeconds; }
+            }
+
+            if (b.normalizationMode == NormalizationMode::Off) {
+                invalidate_normalization_analysis(b);
+                updateLabels();
+                return;
+            }
+            if (!b.assigned || b.storedFilename.empty()) {
+                b.analysisValid = false;
+                b.analysisFailed = true;
+                updateLabels();
+                return;
+            }
+            const auto file = repository.sound_file(b);
+            const auto region = normalization_analysis_region(b);
+            const auto timestamp = file_timestamp_for_analysis(file);
+            const bool cacheMatches = b.analysisValid && !b.analysisFailed &&
+                b.analysisSourceFile == file.string() && b.analysisSourceTimestamp == timestamp &&
+                std::abs(b.analysisRegionStart - region.first) <= 0.0001 &&
+                std::abs(b.analysisRegionEnd - region.second) <= 0.0001;
+            if (cacheMatches) {
+                updateLabels();
+                return;
+            }
+
+            if (normalizationTask) normalizationTask.cancel();
+            b.analysisValid = false;
+            b.analysisFailed = false;
+            b.analysisRegionStart = region.first;
+            b.analysisRegionEnd = region.second;
+            b.analysisSourceFile = file.string();
+            b.analysisSourceTimestamp = timestamp;
+            b.measuredLufs = 0.0;
+            b.measuredPeakDb = 0.0;
+            b.normalizationGainDb = 0.0;
+            updateLabels();
+
+            auto alive = windowAlive;
+            normalizationTask = taskRunner.submit(
+                "loudness-analysis",
+                [file, start = region.first, end = region.second](pulsepad::CancellationToken token) {
+                    if (token.cancellation_requested()) return pulsepad::LoudnessAnalysisResult{};
+                    return analyze_loudness_with_ffmpeg(file, start, end);
+                },
+                [this, alive, dialogAlive, &b, fileString = file.string(), timestamp, start = region.first, end = region.second, &updateLabels](TaskOutcome<pulsepad::LoudnessAnalysisResult> outcome) mutable {
+                    if (!alive->load() || !dialogAlive->load()) return;
+                    if (outcome.status == TaskStatus::Cancelled) return;
+                    if (b.analysisSourceFile != fileString || b.analysisSourceTimestamp != timestamp ||
+                        std::abs(b.analysisRegionStart - start) > 0.0001 || std::abs(b.analysisRegionEnd - end) > 0.0001) return;
+                    if (!outcome.succeeded() || !outcome.value.ok) {
+                        b.analysisValid = false;
+                        b.analysisFailed = true;
+                        updateLabels();
+                        return;
+                    }
+                    b.measuredLufs = outcome.value.measuredLufs;
+                    b.measuredPeakDb = outcome.value.measuredPeakDb;
+                    b.normalizationGainDb = outcome.value.normalizationGainDb;
+                    b.analysisValid = true;
+                    b.analysisFailed = false;
+                    updateLabels();
+                });
+        };
+
         auto apply_controls_to_button = [&]() {
             auto modeId = modeCombo.get_active_id();
             if (modeId == "loop") b.playbackMode = PlaybackMode::Loop;
@@ -2136,11 +2263,19 @@ entry { background: #ffffff; color: #202124; }
             b.pan = clamp_pan(static_cast<float>(pan.get_value()));
             b.fadeInMs = clamp_fade_ms(static_cast<int>(fadeIn.get_value()));
             b.fadeOutMs = clamp_fade_ms(static_cast<int>(fadeOut.get_value()));
+            const auto previousMode = b.normalizationMode;
+            auto normId = normalizationCombo.get_active_id();
+            if (normId == "trimmed") b.normalizationMode = NormalizationMode::TrimmedRegion;
+            else if (normId == "entire") b.normalizationMode = NormalizationMode::EntireFile;
+            else b.normalizationMode = NormalizationMode::Off;
+            if (b.normalizationMode != previousMode) invalidate_normalization_analysis(b);
             b.exclusiveGroup = normalize_group_name(groupCombo.get_active_id());
             b.hotkeyKeyval = learnedHotkeyKeyval;
             b.hotkeyLabel = learnedHotkeyLabel;
             b.midiChannel = learnedMidiChannel;
             b.midiNote = learnedMidiNote;
+            const double previousTrimStart = b.trimStart;
+            const double previousTrimEnd = b.trimEnd;
             b.trimStart = clamp_time_seconds(trimStart.get_value());
             b.trimEnd = clamp_time_seconds(trimEnd.get_value());
             if (b.assigned && b.durationSeconds > 0.0) {
@@ -2148,6 +2283,7 @@ entry { background: #ffffff; color: #202124; }
                 b.trimEnd = std::min(b.trimEnd, b.durationSeconds);
                 if (b.trimEnd <= b.trimStart) { b.trimStart = 0.0; b.trimEnd = b.durationSeconds; }
             }
+            if (std::abs(previousTrimStart - b.trimStart) > 0.0001 || std::abs(previousTrimEnd - b.trimEnd) > 0.0001) invalidate_normalization_analysis(b);
         };
 
         loadButton.signal_clicked().connect([&, id]() {
@@ -2182,7 +2318,7 @@ entry { background: #ffffff; color: #202124; }
                     },
                     [this, alive, dialogAlive, rootDir, previousDraft, originalStored = originalButton.storedFilename,
                      previousLoadLabel, &b, &audioDuration, &trimMax, &trimStart, &trimEnd, &playheadSeconds, &labelEntry,
-                     &loadButton, &reloadWaveform, &updateLabels](TaskOutcome<SoundButton> outcome) mutable {
+                     &loadButton, &reloadWaveform, &updateLabels, &ensureNormalizationAnalysis](TaskOutcome<SoundButton> outcome) mutable {
                         if (!alive->load()) return;
                         if (!dialogAlive->load()) {
                             if (outcome.succeeded()) BoardRepository(rootDir).remove_audio_assets(outcome.value);
@@ -2203,6 +2339,7 @@ entry { background: #ffffff; color: #202124; }
                             BoardRepository(rootDir).remove_audio_assets(previousDraft);
                         }
                         b = std::move(imported);
+                        invalidate_normalization_analysis(b);
                         audioDuration = b.durationSeconds;
                         trimMax = audioDuration > 0.0 ? audioDuration : 300.0;
                         trimStart.set_range(0, trimMax);
@@ -2214,6 +2351,7 @@ entry { background: #ffffff; color: #202124; }
                         labelEntry.set_text(b.label);
                         loadButton.set_label("Audio File: " + b.originalFilename);
                         updateLabels();
+                        ensureNormalizationAnalysis();
                         set_status("Audio loaded; save the dialog to keep it");
                     });
             } else set_status("File selection cancelled");
@@ -2223,6 +2361,8 @@ entry { background: #ffffff; color: #202124; }
             cancel_reverse_job(id);
             if (b.storedFilename != originalButton.storedFilename) repository.remove_audio_assets(b);
             b = default_button(id);
+            invalidate_normalization_analysis(b);
+            normalizationCombo.set_active_id("off");
             labelEntry.set_text(b.label);
             loadButton.set_label("Choose Audio File");
             audioDuration = 0.0;
@@ -2315,6 +2455,7 @@ entry { background: #ffffff; color: #202124; }
         });
         fadeIn.signal_value_changed().connect([&]() { updateLabels(); });
         fadeOut.signal_value_changed().connect([&]() { updateLabels(); });
+        normalizationCombo.signal_changed().connect([&]() { ensureNormalizationAnalysis(); });
         groupCombo.signal_changed().connect([&]() { updateLabels(); });
         trimStart.signal_value_changed().connect([&]() {
             double v = clamp_time_seconds(trimStart.get_value());
@@ -2324,7 +2465,8 @@ entry { background: #ffffff; color: #202124; }
                 v = std::max(0.0, trimEnd.get_value() - minGap);
                 trimStart.set_value(v);
             }
-            updateLabels();
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
         });
         trimEnd.signal_value_changed().connect([&]() {
             double v = clamp_time_seconds(trimEnd.get_value());
@@ -2334,13 +2476,15 @@ entry { background: #ffffff; color: #202124; }
                 v = std::min(audioDuration, trimStart.get_value() + minGap);
                 trimEnd.set_value(v);
             }
-            updateLabels();
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
         });
         resetTrimButton.signal_clicked().connect([&]() {
             trimStart.set_value(0.0);
             trimEnd.set_value(audioDuration > 0.0 ? audioDuration : 0.0);
             playheadSeconds = 0.0;
-            updateLabels();
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
         });
         setStartButton.signal_clicked().connect([&]() {
             if (audioDuration <= 0.0) return;
@@ -2351,7 +2495,8 @@ entry { background: #ffffff; color: #202124; }
             } else {
                 trimStart.set_value(std::min(playheadSeconds, trimEnd.get_value() - minGap));
             }
-            updateLabels();
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
         });
         setEndButton.signal_clicked().connect([&]() {
             if (audioDuration <= 0.0) return;
@@ -2362,7 +2507,8 @@ entry { background: #ffffff; color: #202124; }
             } else {
                 trimEnd.set_value(std::max(playheadSeconds, trimStart.get_value() + minGap));
             }
-            updateLabels();
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
         });
         playPreviewButton.signal_clicked().connect([&, previewKey]() {
             if (!b.assigned || b.storedFilename.empty()) { set_status("No audio assigned. Load audio before previewing trim."); return; }
@@ -2404,7 +2550,7 @@ entry { background: #ffffff; color: #202124; }
                 }
                 if (audioDuration > 0.0 && std::abs(end - audioDuration) <= 0.01) end = 0.0;
                 if (audioDuration <= 0.0) previewActive = true;
-                audio.play(previewKey, file, db_to_linear_volume(static_cast<float>(vol.get_value())), clamp_playback_speed(static_cast<float>(speed.get_value())), 1.0f,
+                audio.play(previewKey, file, db_to_linear_volume(static_cast<float>(vol.get_value())), 1.0f, clamp_playback_speed(static_cast<float>(speed.get_value())), 1.0f,
                            PlaybackMode::Retrigger, clamp_pan(static_cast<float>(pan.get_value())), std::string(), start, end, 0, 0,
                            [this](const std::string& msg) { Glib::signal_idle().connect_once([this, msg]() { set_status(msg); }); });
                 refresh_mixer_ui();
@@ -2425,8 +2571,11 @@ entry { background: #ffffff; color: #202124; }
             set_status("Preview stopped");
         });
 
+        ensureNormalizationAnalysis();
+
         int response = run_dialog_blocking(dialog);
         dialogAlive->store(false);
+        if (normalizationTask) normalizationTask.cancel();
         *waveformTimerAlive = false;
         if (*waveformTask) waveformTask->cancel();
         previewActive = false;

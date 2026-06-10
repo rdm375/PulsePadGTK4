@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iomanip>
+#include <utility>
 #include <limits>
 #include <sstream>
 #include <set>
@@ -76,10 +77,16 @@ std::string to_string(PadGroupType type) { return type == PadGroupType::Exclusiv
 std::string to_string(GroupTransition transition) {
     switch (transition) { case GroupTransition::Fade: return "fade"; case GroupTransition::Crossfade: return "crossfade"; default: return "stop"; }
 }
+std::string to_string(NormalizationMode mode) {
+    switch (mode) { case NormalizationMode::TrimmedRegion: return "TrimmedRegion"; case NormalizationMode::EntireFile: return "EntireFile"; default: return "Off"; }
+}
 std::string display_label(PlaybackMode m) {
     switch (m) { case PlaybackMode::Loop: return "Loop"; case PlaybackMode::Retrigger: return "Retrigger"; default: return "Play Through"; }
 }
 std::string display_label(PlaybackDirection d) { return d == PlaybackDirection::Reverse ? "Reverse" : "Forward"; }
+std::string display_label(NormalizationMode mode) {
+    switch (mode) { case NormalizationMode::TrimmedRegion: return "Trimmed Region"; case NormalizationMode::EntireFile: return "Entire File"; default: return "Off"; }
+}
 AppThemeMode theme_from_string(const std::string& s) { return s == "Dark" ? AppThemeMode::Dark : AppThemeMode::Light; }
 PlaybackDirection direction_from_string(const std::string& s) { return s == "Reverse" ? PlaybackDirection::Reverse : PlaybackDirection::Forward; }
 PlaybackMode playback_from_string(const std::string& s, bool loop_fallback) {
@@ -99,6 +106,48 @@ GroupTransition group_transition_from_string(const std::string& value) {
     if (v == "fade") return GroupTransition::Fade;
     if (v == "crossfade") return GroupTransition::Crossfade;
     return GroupTransition::Stop;
+}
+NormalizationMode normalization_mode_from_string(const std::string& value) {
+    std::string v = value;
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (v == "trimmed" || v == "trimmedregion" || v == "trimmed_region" || v == "trimmed-region") return NormalizationMode::TrimmedRegion;
+    if (v == "entire" || v == "entirefile" || v == "entire_file" || v == "entire-file" || v == "fullfile" || v == "full_file") return NormalizationMode::EntireFile;
+    return NormalizationMode::Off;
+}
+
+void invalidate_normalization_analysis(SoundButton& b) {
+    b.measuredLufs = 0.0;
+    b.measuredPeakDb = 0.0;
+    b.normalizationGainDb = 0.0;
+    b.analysisRegionStart = 0.0;
+    b.analysisRegionEnd = 0.0;
+    b.analysisSourceFile.clear();
+    b.analysisSourceTimestamp.clear();
+    b.analysisValid = false;
+    b.analysisFailed = false;
+}
+
+std::pair<double, double> normalization_analysis_region(const SoundButton& b) {
+    if (b.normalizationMode == NormalizationMode::TrimmedRegion) {
+        double start = clamp_time_seconds(b.trimStart);
+        double end = clamp_time_seconds(b.trimEnd);
+        if (b.durationSeconds > 0.0) {
+            start = std::min(start, b.durationSeconds);
+            if (end <= 0.0 || end > b.durationSeconds) end = b.durationSeconds;
+        }
+        if (end > 0.0 && end > start) return {start, end};
+    }
+    return {0.0, b.durationSeconds > 0.0 ? b.durationSeconds : 0.0};
+}
+
+double calculate_normalization_gain_db(double targetLufs, double measuredLufs, double peakCeilingDb, double measuredPeakDb) {
+    if (!std::isfinite(targetLufs) || !std::isfinite(measuredLufs) || !std::isfinite(peakCeilingDb) || !std::isfinite(measuredPeakDb)) return 0.0;
+    return std::min(targetLufs - measuredLufs, peakCeilingDb - measuredPeakDb);
+}
+
+double normalization_gain_linear(const SoundButton& b) {
+    if (b.normalizationMode == NormalizationMode::Off || !b.analysisValid || !std::isfinite(b.normalizationGainDb)) return 1.0;
+    return std::pow(10.0, b.normalizationGainDb / 20.0);
 }
 
 std::string default_button_label(int id) { return "Pad " + std::to_string(id + 1); }
@@ -183,7 +232,15 @@ std::string encode_board_config(const BoardState& state) {
           << "\",\"group\":\"" << esc(b.exclusiveGroup) << "\",\"hotkey_keyval\":" << b.hotkeyKeyval << ",\"hotkey_label\":\"" << esc(b.hotkeyLabel)
           << "\",\"midi_channel\":" << b.midiChannel << ",\"midi_note\":" << b.midiNote << ",\"playback_mode\":\"" << to_string(b.playbackMode)
           << "\",\"playback_direction\":\"" << to_string(b.playbackDirection) << "\",\"assigned\":" << (b.assigned ? "true" : "false")
-          << ",\"user_renamed\":" << (b.userRenamed ? "true" : "false") << "}";
+          << ",\"user_renamed\":" << (b.userRenamed ? "true" : "false")
+          << ",\"normalization_mode\":\"" << to_string(b.normalizationMode) << "\""
+          << ",\"measured_lufs\":" << b.measuredLufs << ",\"measured_peak_db\":" << b.measuredPeakDb
+          << ",\"normalization_gain_db\":" << b.normalizationGainDb
+          << ",\"analysis_region_start\":" << b.analysisRegionStart << ",\"analysis_region_end\":" << b.analysisRegionEnd
+          << ",\"analysis_source_file\":\"" << esc(b.analysisSourceFile) << "\""
+          << ",\"analysis_source_timestamp\":\"" << esc(b.analysisSourceTimestamp) << "\""
+          << ",\"analysis_valid\":" << (b.analysisValid ? "true" : "false")
+          << ",\"analysis_failed\":" << (b.analysisFailed ? "true" : "false") << "}";
     }
     o << "]\n}\n";
     return o.str();
@@ -252,6 +309,16 @@ static std::vector<SoundButton> decode_buttons_value(const JV& arr, int desiredC
         b.playbackMode = playback_from_string(strv(o, "playback_mode", ""), boolv(o, "loop", false));
         b.assigned = boolv(o, "assigned", false);
         b.userRenamed = boolv(o, "user_renamed", false);
+        b.normalizationMode = normalization_mode_from_string(strv(o, "normalization_mode", "Off"));
+        b.measuredLufs = numv(o, "measured_lufs", 0.0);
+        b.measuredPeakDb = numv(o, "measured_peak_db", numv(o, "measured_peak", 0.0));
+        b.normalizationGainDb = numv(o, "normalization_gain_db", 0.0);
+        b.analysisRegionStart = clamp_time_seconds(numv(o, "analysis_region_start", 0.0));
+        b.analysisRegionEnd = clamp_time_seconds(numv(o, "analysis_region_end", 0.0));
+        b.analysisSourceFile = strv(o, "analysis_source_file", "");
+        b.analysisSourceTimestamp = strv(o, "analysis_source_timestamp", "");
+        b.analysisValid = boolv(o, "analysis_valid", false);
+        b.analysisFailed = boolv(o, "analysis_failed", false);
         buttons[static_cast<std::vector<SoundButton>::size_type>(i)] = b;
     }
     return buttons;
@@ -290,7 +357,7 @@ BoardState decode_board_config(const std::string& text) {
     auto root = JsonParser(text).parse();
     if (auto format = obj_get(root, "format"); format && format->type == JsonParser::Str && format->s != "soundboard-config") throw std::runtime_error("Invalid board package manifest");
     const int version = static_cast<int>(numv(root, "version", 1));
-    if (version > 3) throw std::runtime_error("Unsupported version: " + std::to_string(version));
+    if (version > 4) throw std::runtime_error("Unsupported version: " + std::to_string(version));
     BoardState state = default_board_state();
     if (auto grid = obj_get(root, "grid")) {
         state.gridRows = clamp_grid_size(static_cast<int>(numv(*grid, "rows", 3)));
