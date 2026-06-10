@@ -78,14 +78,14 @@ std::string to_string(GroupTransition transition) {
     switch (transition) { case GroupTransition::Fade: return "fade"; case GroupTransition::Crossfade: return "crossfade"; default: return "stop"; }
 }
 std::string to_string(NormalizationMode mode) {
-    switch (mode) { case NormalizationMode::TrimmedRegion: return "TrimmedRegion"; case NormalizationMode::EntireFile: return "EntireFile"; default: return "Off"; }
+    switch (mode) { case NormalizationMode::TrimmedRegion: return "TrimmedRegion"; default: return "Off"; }
 }
 std::string display_label(PlaybackMode m) {
     switch (m) { case PlaybackMode::Loop: return "Loop"; case PlaybackMode::Retrigger: return "Retrigger"; default: return "Play Through"; }
 }
 std::string display_label(PlaybackDirection d) { return d == PlaybackDirection::Reverse ? "Reverse" : "Forward"; }
 std::string display_label(NormalizationMode mode) {
-    switch (mode) { case NormalizationMode::TrimmedRegion: return "Trimmed Region"; case NormalizationMode::EntireFile: return "Entire File"; default: return "Off"; }
+    switch (mode) { case NormalizationMode::TrimmedRegion: return "Trimmed Region"; default: return "Off"; }
 }
 AppThemeMode theme_from_string(const std::string& s) { return s == "Dark" ? AppThemeMode::Dark : AppThemeMode::Light; }
 PlaybackDirection direction_from_string(const std::string& s) { return s == "Reverse" ? PlaybackDirection::Reverse : PlaybackDirection::Forward; }
@@ -111,7 +111,7 @@ NormalizationMode normalization_mode_from_string(const std::string& value) {
     std::string v = value;
     std::transform(v.begin(), v.end(), v.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (v == "trimmed" || v == "trimmedregion" || v == "trimmed_region" || v == "trimmed-region") return NormalizationMode::TrimmedRegion;
-    if (v == "entire" || v == "entirefile" || v == "entire_file" || v == "entire-file" || v == "fullfile" || v == "full_file") return NormalizationMode::EntireFile;
+    if (v == "entire" || v == "entirefile" || v == "entire_file" || v == "entire-file" || v == "fullfile" || v == "full_file") return NormalizationMode::TrimmedRegion;
     return NormalizationMode::Off;
 }
 

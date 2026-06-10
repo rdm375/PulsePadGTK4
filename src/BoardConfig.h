@@ -18,7 +18,7 @@ enum class PlaybackMode { PlayThrough, Loop, Retrigger };
 enum class PlaybackDirection { Forward, Reverse };
 enum class PadGroupType { Play, Exclusive };
 enum class GroupTransition { Stop, Fade, Crossfade };
-enum class NormalizationMode { Off, TrimmedRegion, EntireFile };
+enum class NormalizationMode { Off, TrimmedRegion };
 
 struct PadGroup {
     std::string name;

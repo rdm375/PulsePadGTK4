@@ -193,9 +193,7 @@ static void test_normalization_config_and_helpers() {
 static void test_normalization_mode_ui_ids_parse() {
     CHECK(normalization_mode_from_string("off") == NormalizationMode::Off);
     CHECK(normalization_mode_from_string("trimmed") == NormalizationMode::TrimmedRegion);
-    CHECK(normalization_mode_from_string("entire") == NormalizationMode::EntireFile);
     CHECK(normalization_mode_from_string("TrimmedRegion") == NormalizationMode::TrimmedRegion);
-    CHECK(normalization_mode_from_string("EntireFile") == NormalizationMode::EntireFile);
 }
 
 static void test_normalization_regions_and_invalidation() {
@@ -207,11 +205,6 @@ static void test_normalization_regions_and_invalidation() {
     auto trimmed = normalization_analysis_region(b);
     CHECK_NEAR(trimmed.first, 2.0, 0.0001);
     CHECK_NEAR(trimmed.second, 6.0, 0.0001);
-
-    b.normalizationMode = NormalizationMode::EntireFile;
-    auto full = normalization_analysis_region(b);
-    CHECK_NEAR(full.first, 0.0, 0.0001);
-    CHECK_NEAR(full.second, 10.0, 0.0001);
 
     b.normalizationMode = NormalizationMode::TrimmedRegion;
     b.trimStart = 0.0;

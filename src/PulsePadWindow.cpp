@@ -1722,9 +1722,7 @@ entry { background: #ffffff; color: #202124; }
         Gtk::ComboBoxText normalizationCombo;
         normalizationCombo.append("off", display_label(NormalizationMode::Off));
         normalizationCombo.append("trimmed", display_label(NormalizationMode::TrimmedRegion));
-        normalizationCombo.append("entire", display_label(NormalizationMode::EntireFile));
         if (b.normalizationMode == NormalizationMode::TrimmedRegion) normalizationCombo.set_active_id("trimmed");
-        else if (b.normalizationMode == NormalizationMode::EntireFile) normalizationCombo.set_active_id("entire");
         else normalizationCombo.set_active_id("off");
         normalizationCombo.set_tooltip_text("Apply cached automatic loudness gain before the manual pad volume");
         Gtk::Label normalizationInfo;
@@ -2177,7 +2175,6 @@ entry { background: #ffffff; color: #202124; }
         auto ensureNormalizationAnalysis = [&]() {
             auto normId = normalizationCombo.get_active_id();
             if (normId == "trimmed") b.normalizationMode = NormalizationMode::TrimmedRegion;
-            else if (normId == "entire") b.normalizationMode = NormalizationMode::EntireFile;
             else b.normalizationMode = NormalizationMode::Off;
 
             b.trimStart = clamp_time_seconds(trimStart.get_value());
@@ -2266,7 +2263,6 @@ entry { background: #ffffff; color: #202124; }
             const auto previousMode = b.normalizationMode;
             auto normId = normalizationCombo.get_active_id();
             if (normId == "trimmed") b.normalizationMode = NormalizationMode::TrimmedRegion;
-            else if (normId == "entire") b.normalizationMode = NormalizationMode::EntireFile;
             else b.normalizationMode = NormalizationMode::Off;
             if (b.normalizationMode != previousMode) invalidate_normalization_analysis(b);
             b.exclusiveGroup = normalize_group_name(groupCombo.get_active_id());
