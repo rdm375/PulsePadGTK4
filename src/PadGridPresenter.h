@@ -25,5 +25,7 @@ std::string pad_button_text(const SoundButton& button, bool reverseReady);
 std::string playing_title(const PlayingInfo& info, const SoundButton* button);
 std::string playing_detail(const PlayingInfo& info, const SoundButton* button, const PadGroup* group);
 double playback_progress_fraction(double position, double duration, double trimStart, double trimEnd);
+std::string build_pad_search_text(const SoundButton& button, const std::vector<PadGroup>& groups);
+bool pad_matches_search(const SoundButton& button, const std::vector<PadGroup>& groups, const std::string& query);
 
 } // namespace pulsepad

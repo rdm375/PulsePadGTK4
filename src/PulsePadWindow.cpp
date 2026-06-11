@@ -105,6 +105,7 @@ using pulsepad::find_group;
 using pulsepad::format_db;
 using pulsepad::linear_volume_to_db;
 using pulsepad::pad_button_text;
+using pulsepad::pad_matches_search;
 using pulsepad::playing_detail;
 using pulsepad::playing_title;
 using pulsepad::playback_progress_fraction;
@@ -193,6 +194,8 @@ private:
 
     Gtk::Box root{Gtk::Orientation::VERTICAL, 12};
     Gtk::Box toolbar{Gtk::Orientation::HORIZONTAL, 8};
+    Gtk::SearchEntry padSearchEntry;
+    std::string padSearchQuery;
     Gtk::ScrolledWindow padScroller;
     Gtk::Grid grid;
     Gtk::Box bottom{Gtk::Orientation::HORIZONTAL, 12};
@@ -447,6 +450,26 @@ private:
         volumeBox->append(masterScale );
         toolbar.append(stopButton );
         toolbar.append(*volumeBox );
+
+        padSearchEntry.set_placeholder_text("Search pads...");
+        padSearchEntry.set_hexpand(false);
+        padSearchEntry.set_size_request(220, -1);
+        padSearchEntry.set_tooltip_text("Search pads by label, filename, group, hotkey, or MIDI mapping");
+        padSearchEntry.signal_search_changed().connect([this]() {
+            padSearchQuery = trim_copy(padSearchEntry.get_text());
+            refresh_pad_search();
+        });
+        auto searchKeyController = Gtk::EventControllerKey::create();
+        searchKeyController->signal_key_pressed().connect([this](guint keyval, guint, Gdk::ModifierType) {
+            if (gdk_keyval_to_lower(keyval) != GDK_KEY_Escape) return false;
+            padSearchEntry.set_text("");
+            padSearchQuery.clear();
+            refresh_pad_search();
+            grab_focus();
+            return true;
+        }, false);
+        padSearchEntry.add_controller(searchKeyController);
+        toolbar.append(padSearchEntry );
         root.append(toolbar );
 
         padScroller.set_hexpand(true);
@@ -485,6 +508,18 @@ private:
     bool on_key_press(guint keyval, Gdk::ModifierType modifiers) {
         const guint key = gdk_keyval_to_lower(keyval);
         const bool ctrl = (static_cast<unsigned>(modifiers) & static_cast<unsigned>(Gdk::ModifierType::CONTROL_MASK)) != 0;
+        if (ctrl && key == 'f') {
+            padSearchEntry.grab_focus();
+            return true;
+        }
+        if (key == GDK_KEY_Escape && (padSearchEntry.has_focus() || !padSearchQuery.empty())) {
+            padSearchEntry.set_text("");
+            padSearchQuery.clear();
+            refresh_pad_search();
+            grab_focus();
+            return true;
+        }
+        if (padSearchEntry.has_focus()) return false;
         if (ctrl && key == 'c') return copy_focused_pad();
         if (ctrl && key == 'v') return paste_to_focused_pad();
 
@@ -563,6 +598,8 @@ button:hover { background-color: #3c4043; }
 .pad-button.pad-purple.pad-playing { background-color: #57307f; box-shadow: 0 0 16px 4px rgba(147,52,230,0.65); }
 .pad-button.pad-pink.pad-playing { background-color: #772b5d; box-shadow: 0 0 16px 4px rgba(208,24,132,0.65); }
 .pad-button.pad-gray.pad-playing { background-color: #4b535a; box-shadow: 0 0 16px 4px alpha(#9aa0a6, 0.65); }
+.pad-button.search-dimmed { opacity: 0.32; }
+.pad-button.search-match { box-shadow: 0 0 0 3px rgba(138,180,248,0.65); }
 .status-card { background: #303134; color: #f1f3f4; border-radius: 14px; padding: 12px; }
 .mixer-panel { background: #303134; color: #f1f3f4; border-radius: 14px; padding: 8px; }
 .mixer-row { padding: 4px; }
@@ -606,6 +643,8 @@ button:hover { background-color: #dadce0; }
 .pad-button.pad-purple.pad-playing { background-color: #f3e8fd; box-shadow: 0 0 16px 4px rgba(147,52,230,0.45); }
 .pad-button.pad-pink.pad-playing { background-color: #fde7f3; box-shadow: 0 0 16px 4px rgba(208,24,132,0.45); }
 .pad-button.pad-gray.pad-playing { background-color: #f1f3f4; box-shadow: 0 0 16px 4px rgba(95,99,104,0.45); }
+.pad-button.search-dimmed { opacity: 0.32; }
+.pad-button.search-match { box-shadow: 0 0 0 3px rgba(26,115,232,0.45); }
 .status-card { background: #e8eaed; color: #202124; border-radius: 14px; padding: 12px; }
 .mixer-panel { background: #e8eaed; color: #202124; border-radius: 14px; padding: 8px; }
 .mixer-row { padding: 4px; }
@@ -769,6 +808,23 @@ entry { background: #ffffff; color: #202124; }
             if (audio.is_key_playing(b.id)) style->add_class("pad-playing");
             else style->remove_class("pad-playing");
             padButtons[checked_index(i)]->set_label(text);
+        }
+        refresh_pad_search();
+    }
+
+    void refresh_pad_search() {
+        for (int i = 0; i < static_cast<int>(padButtons.size()); ++i) {
+            auto* button = padButtons[checked_index(i)];
+            if (!button) continue;
+            auto style = button->get_style_context();
+            style->remove_class("search-match");
+            style->remove_class("search-dimmed");
+            if (padSearchQuery.empty() || i >= static_cast<int>(state.buttons.size())) continue;
+            if (pad_matches_search(state.buttons[checked_index(i)], state.groups, padSearchQuery)) {
+                style->add_class("search-match");
+            } else {
+                style->add_class("search-dimmed");
+            }
         }
     }
 
@@ -1042,6 +1098,7 @@ entry { background: #ffffff; color: #202124; }
             grid.attach(*btn, i % state.gridColumns, i / state.gridColumns, 1, 1);
             padButtons.push_back(btn);
         }
+        refresh_pad_search();
     }
 
     void open_settings_dialog() {

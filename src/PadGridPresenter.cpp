@@ -1,12 +1,31 @@
 #include "PadGridPresenter.h"
+#include "MidiController.h"
 #include "Waveform.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
 
 namespace pulsepad {
+
+
+namespace {
+
+std::string lower_copy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+std::string basename_from_path(const std::string& path) {
+    const auto pos = path.find_last_of("/\\");
+    if (pos == std::string::npos) return path;
+    if (pos + 1 >= path.size()) return std::string{};
+    return path.substr(pos + 1);
+}
+
+} // namespace
 
 float linear_volume_to_db(float v) {
     v = clamp_pad_volume(v);
@@ -95,6 +114,45 @@ std::string pad_button_text(const SoundButton& b, bool reverseReady) {
         text += reverseReady ? "\nReverse ready" : "\nReverse pending";
     }
     return text;
+}
+
+
+std::string build_pad_search_text(const SoundButton& b, const std::vector<PadGroup>& groups) {
+    std::ostringstream ss;
+    ss << b.label << ' '
+       << b.originalFilename << ' '
+       << basename_from_path(b.originalFilename) << ' '
+       << b.storedFilename << ' '
+       << basename_from_path(b.storedFilename) << ' '
+       << b.relativePathOrAssetReference << ' '
+       << basename_from_path(b.relativePathOrAssetReference) << ' '
+       << b.hotkeyLabel << ' '
+       << display_label(b.playbackMode) << ' '
+       << display_label(b.playbackDirection) << ' '
+       << display_label(b.normalizationMode) << ' ';
+
+    if (!b.exclusiveGroup.empty()) {
+        ss << b.exclusiveGroup << ' ';
+        if (const auto* group = find_group(groups, b.exclusiveGroup)) {
+            ss << group->name << ' '
+               << display_group_type(group->type) << ' '
+               << display_group_transition(group->transition) << ' ';
+        }
+    }
+    if (!b.hotkeyLabel.empty()) ss << "hotkey " << b.hotkeyLabel << ' ';
+    if (valid_midi_trigger(b.midiChannel, b.midiNote)) {
+        ss << "midi ch " << b.midiChannel << ' '
+           << "midi channel " << b.midiChannel << ' '
+           << "note " << b.midiNote << ' '
+           << "midi note " << b.midiNote << ' ';
+    }
+    return ss.str();
+}
+
+bool pad_matches_search(const SoundButton& button, const std::vector<PadGroup>& groups, const std::string& query) {
+    const std::string q = lower_copy(trim_copy(query));
+    if (q.empty()) return true;
+    return lower_copy(build_pad_search_text(button, groups)).find(q) != std::string::npos;
 }
 
 std::string playing_title(const PlayingInfo& info, const SoundButton* button) {

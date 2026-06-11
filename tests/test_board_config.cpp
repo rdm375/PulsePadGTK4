@@ -289,6 +289,29 @@ static void test_import_limits() {
     CHECK_THROWS(validate_package_entries_or_throw({{"soundboard.json", 1}, {"sounds/a.wav", 1}, {"sounds/a.wav", 1}}, limits));
 }
 
+
+static void test_pad_search_helpers() {
+    BoardState s = populated_board();
+    SoundButton& b = s.buttons[0];
+    b.label = "Door Slam";
+    b.originalFilename = "/show/sfx/door_slam.wav";
+    b.relativePathOrAssetReference = "sounds/button-0-door_slam.wav";
+    b.exclusiveGroup = "Drums";
+    b.hotkeyLabel = "Ctrl+1";
+    b.midiChannel = 1;
+    b.midiNote = 42;
+
+    CHECK(pad_matches_search(b, s.groups, "door"));
+    CHECK(pad_matches_search(b, s.groups, "DOOR"));
+    CHECK(pad_matches_search(b, s.groups, "door_slam.wav"));
+    CHECK(pad_matches_search(b, s.groups, "drums"));
+    CHECK(pad_matches_search(b, s.groups, "ctrl+1"));
+    CHECK(pad_matches_search(b, s.groups, "midi channel 1"));
+    CHECK(pad_matches_search(b, s.groups, "midi note 42"));
+    CHECK(pad_matches_search(b, s.groups, "   "));
+    CHECK(!pad_matches_search(b, s.groups, "no such pad"));
+}
+
 static void test_pad_grid_presenter_labels_and_progress() {
     auto s = populated_board();
     const auto& b = s.buttons[0];
@@ -329,6 +352,7 @@ int main() {
     test_import_path_validation();
     test_import_limits();
     test_pad_grid_presenter_labels_and_progress();
+    test_pad_search_helpers();
     if (failures) {
         std::cerr << failures << " test assertion(s) failed\n";
         return 1;
