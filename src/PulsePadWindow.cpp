@@ -2367,7 +2367,7 @@ entry { background: #ffffff; color: #202124; }
             if (b.storedFilename != originalButton.storedFilename) repository.remove_audio_assets(b);
             b = default_button(id);
             invalidate_normalization_analysis(b);
-            normalizationCombo.set_active_id("off");
+            normalizationCombo.set_active_id("trimmed");
             labelEntry.set_text(b.label);
             loadButton.set_label("Choose Audio File");
             audioDuration = 0.0;

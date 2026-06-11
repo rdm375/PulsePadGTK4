@@ -240,6 +240,8 @@ SoundButton BoardRepository::import_audio_for_button(const SoundButton& button, 
     b.durationSeconds = get_audio_duration_seconds_with_ffprobe(outFile);
     b.trimStart = 0.0;
     b.trimEnd = b.durationSeconds;
+    b.normalizationMode = NormalizationMode::TrimmedRegion;
+    invalidate_normalization_analysis(b);
     b.assigned = true;
     return b;
 }

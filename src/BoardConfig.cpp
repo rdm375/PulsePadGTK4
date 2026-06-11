@@ -308,7 +308,7 @@ static std::vector<SoundButton> decode_buttons_value(const JV& arr, int desiredC
         b.playbackMode = playback_from_string(strv(o, "playback_mode", ""), boolv(o, "loop", false));
         b.assigned = boolv(o, "assigned", false);
         b.userRenamed = boolv(o, "user_renamed", false);
-        b.normalizationMode = normalization_mode_from_string(strv(o, "normalization_mode", "Off"));
+        b.normalizationMode = normalization_mode_from_string(strv(o, "normalization_mode", "trimmed"));
         b.measuredLufs = numv(o, "measured_lufs", 0.0);
         b.measuredPeakDb = numv(o, "measured_peak_db", numv(o, "measured_peak", 0.0));
         b.normalizationGainDb = numv(o, "normalization_gain_db", 0.0);

@@ -60,7 +60,7 @@ struct SoundButton {
     PlaybackDirection playbackDirection = PlaybackDirection::Forward;
     bool assigned = false;
     bool userRenamed = false;
-    NormalizationMode normalizationMode = NormalizationMode::Off;
+    NormalizationMode normalizationMode = NormalizationMode::TrimmedRegion;
     double measuredLufs = 0.0;
     double measuredPeakDb = 0.0;
     double normalizationGainDb = 0.0;
