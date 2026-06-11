@@ -6,12 +6,23 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <regex>
 #include <sstream>
 
 namespace pulsepad {
+
+static bool debug_zero_crossing_enabled() {
+    const char* value = std::getenv("PULSEPAD_DEBUG_ZERO_CROSSING");
+    return value && *value && std::string(value) != "0";
+}
+
+static void debug_zero_crossing_log(const std::string& message) {
+    if (debug_zero_crossing_enabled()) std::cerr << "[zero-cross] " << message << std::endl;
+}
 
 bool command_available(const char* name) {
     return name && executable_available(name);
@@ -30,11 +41,13 @@ double get_audio_duration_seconds_with_ffprobe(const std::filesystem::path& file
     try { return clamp_time_seconds(std::stod(result.stdoutText)); } catch (...) { return 0.0; }
 }
 
-std::vector<double> generate_waveform_peaks(const std::filesystem::path& file, double durationSeconds, int bins) {
-    std::vector<double> peaks(static_cast<size_t>(std::max(1, bins)), 0.0);
-    if (durationSeconds <= 0.0 || bins <= 0) return peaks;
+WaveformData generate_waveform_data(const std::filesystem::path& file, double durationSeconds, int bins) {
+    WaveformData out;
+    out.peaks.assign(static_cast<size_t>(std::max(1, bins)), 0.0);
+    if (durationSeconds <= 0.0 || bins <= 0) return out;
 
     constexpr int sampleRate = 8000;
+    out.sampleRate = sampleRate;
     const long long expectedSamples = std::max(1LL, static_cast<long long>(durationSeconds * sampleRate));
     SubprocessOptions options;
     options.maxStdoutBytes = static_cast<std::size_t>(std::min<long long>(expectedSamples * 2 + 4096, 64LL * 1024LL * 1024LL));
@@ -47,6 +60,7 @@ std::vector<double> generate_waveform_peaks(const std::filesystem::path& file, d
     }
 
     const std::string& data = result.stdoutText;
+    out.monoSamples.reserve(data.size() / 2);
     long long sampleIndex = 0;
     for (size_t i = 0; i + 1 < data.size(); i += 2) {
         unsigned char lo = static_cast<unsigned char>(data[i]);
@@ -55,11 +69,87 @@ std::vector<double> generate_waveform_peaks(const std::filesystem::path& file, d
         int bin = static_cast<int>((sampleIndex * bins) / expectedSamples);
         if (bin < 0) bin = 0;
         if (bin >= bins) bin = bins - 1;
-        double amp = std::min(1.0, std::abs(static_cast<int>(sample)) / 32768.0);
-        peaks[static_cast<size_t>(bin)] = std::max(peaks[static_cast<size_t>(bin)], amp);
+        double normalized = std::max(-1.0, std::min(1.0, static_cast<double>(sample) / 32768.0));
+        double amp = std::min(1.0, std::abs(normalized));
+        out.peaks[static_cast<size_t>(bin)] = std::max(out.peaks[static_cast<size_t>(bin)], amp);
+        out.monoSamples.push_back(normalized);
         ++sampleIndex;
     }
-    return peaks;
+    {
+        std::ostringstream zs;
+        zs << "generate_waveform_data file=" << file.string()
+           << " duration=" << durationSeconds
+           << " bins=" << bins
+           << " decodedSamples=" << out.monoSamples.size()
+           << " sampleRate=" << out.sampleRate;
+        debug_zero_crossing_log(zs.str());
+    }
+    return out;
+}
+
+std::vector<double> generate_waveform_peaks(const std::filesystem::path& file, double durationSeconds, int bins) {
+    return generate_waveform_data(file, durationSeconds, bins).peaks;
+}
+
+std::optional<double> find_nearest_zero_crossing(const std::vector<double>& monoSamples, int sampleRate, double requestedSeconds, double durationSeconds, double searchWindowSeconds, double nearZeroThreshold) {
+    if (monoSamples.size() < 2 || sampleRate <= 0 || durationSeconds <= 0.0 || !std::isfinite(requestedSeconds)) return std::nullopt;
+    const double duration = std::min(durationSeconds, static_cast<double>(monoSamples.size() - 1) / static_cast<double>(sampleRate));
+    if (duration <= 0.0) return std::nullopt;
+    const double requested = std::max(0.0, std::min(duration, requestedSeconds));
+    const double window = std::max(0.0, searchWindowSeconds);
+    const double threshold = std::max(0.0, nearZeroThreshold);
+    const long long target = std::max(0LL, std::min(static_cast<long long>(monoSamples.size() - 1), static_cast<long long>(std::llround(requested * sampleRate))));
+    const long long radius = std::max(1LL, static_cast<long long>(std::ceil(window * sampleRate)));
+    const long long first = std::max(0LL, target - radius);
+    const long long last = std::min(static_cast<long long>(monoSamples.size() - 1), target + radius);
+
+    long long bestIndex = -1;
+    long long bestDistance = std::numeric_limits<long long>::max();
+    auto consider = [&](long long index) {
+        if (index < first || index > last) return;
+        const long long distance = std::llabs(index - target);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    };
+
+    for (long long i = first; i <= last; ++i) {
+        if (std::abs(monoSamples[static_cast<size_t>(i)]) <= threshold) consider(i);
+    }
+    for (long long i = first; i < last; ++i) {
+        const double a = monoSamples[static_cast<size_t>(i)];
+        const double b = monoSamples[static_cast<size_t>(i + 1)];
+        if ((a < 0.0 && b > 0.0) || (a > 0.0 && b < 0.0)) {
+            consider(std::llabs(i - target) <= std::llabs(i + 1 - target) ? i : i + 1);
+        }
+    }
+
+    if (bestIndex < 0) {
+        std::ostringstream zs;
+        zs << "find_nearest_zero_crossing none requested=" << requestedSeconds
+           << " targetSample=" << target
+           << " first=" << first
+           << " last=" << last
+           << " sampleRate=" << sampleRate
+           << " samples=" << monoSamples.size();
+        debug_zero_crossing_log(zs.str());
+        return std::nullopt;
+    }
+    const double result = std::max(0.0, std::min(durationSeconds, static_cast<double>(bestIndex) / static_cast<double>(sampleRate)));
+    {
+        std::ostringstream zs;
+        zs << "find_nearest_zero_crossing requested=" << requestedSeconds
+           << " targetSample=" << target
+           << " bestSample=" << bestIndex
+           << " result=" << result
+           << " distanceSamples=" << bestDistance
+           << " first=" << first
+           << " last=" << last
+           << " sampleRate=" << sampleRate;
+        debug_zero_crossing_log(zs.str());
+    }
+    return result;
 }
 
 

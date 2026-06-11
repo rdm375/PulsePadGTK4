@@ -76,7 +76,8 @@ using pulsepad::format_midi_trigger;
 using pulsepad::ensure_button_count;
 using pulsepad::group_transition_from_string;
 using pulsepad::group_type_from_string;
-using pulsepad::generate_waveform_peaks;
+using pulsepad::find_nearest_zero_crossing;
+using pulsepad::generate_waveform_data;
 using pulsepad::analyze_loudness_with_ffmpeg;
 using pulsepad::file_timestamp_for_analysis;
 using pulsepad::TaskHandle;
@@ -107,6 +108,15 @@ using pulsepad::pad_button_text;
 using pulsepad::playing_detail;
 using pulsepad::playing_title;
 using pulsepad::playback_progress_fraction;
+
+static bool debug_zero_crossing_enabled() {
+    const char* value = std::getenv("PULSEPAD_DEBUG_ZERO_CROSSING");
+    return value && *value && std::string(value) != "0";
+}
+
+static void debug_zero_crossing_log(const std::string& message) {
+    if (debug_zero_crossing_enabled()) std::cerr << "[zero-cross] " << message << std::endl;
+}
 using pulsepad::PAD_VOLUME_MAX_DB;
 using pulsepad::PAD_VOLUME_MIN_DB;
 namespace ui = pulsepad::ui;
@@ -1689,6 +1699,8 @@ entry { background: #ffffff; color: #202124; }
         vol.add_mark(6.0, Gtk::PositionType::BOTTOM, "+6");
         vol.add_mark(PAD_VOLUME_MAX_DB, Gtk::PositionType::BOTTOM, "+12");
         speed.add_mark(0.0, Gtk::PositionType::BOTTOM, "0.0");
+        speed.add_mark(0.125, Gtk::PositionType::BOTTOM, "0.125");
+        speed.add_mark(0.25, Gtk::PositionType::BOTTOM, "0.25");
         speed.add_mark(0.5, Gtk::PositionType::BOTTOM, "0.5");
         speed.add_mark(1.0, Gtk::PositionType::BOTTOM, "1.0x");
         speed.add_mark(1.5, Gtk::PositionType::BOTTOM, "1.5");
@@ -1777,6 +1789,8 @@ entry { background: #ffffff; color: #202124; }
         trimStart.set_value(b.trimStart);
         trimEnd.set_value(audioDuration > 0.0 && b.trimEnd <= 0.0 ? audioDuration : b.trimEnd);
         Gtk::Button resetTrimButton("Reset");
+        Gtk::Button snapStartButton("Snap Start");
+        Gtk::Button snapEndButton("Snap End");
         Gtk::Button playPreviewButton("Play Preview");
         Gtk::Button stopPreviewButton("Stop");
         Gtk::Button setStartButton("Set Start");
@@ -1784,11 +1798,15 @@ entry { background: #ffffff; color: #202124; }
         trimStart.set_tooltip_text("Trim start time in seconds");
         trimEnd.set_tooltip_text("Trim end time in seconds");
         resetTrimButton.set_tooltip_text("Reset trim to the full audio length");
+        snapStartButton.set_tooltip_text("Snap trim start to the nearest zero crossing near the waveform cursor or current trim start");
+        snapEndButton.set_tooltip_text("Snap trim end to the nearest zero crossing near the waveform cursor or current trim end");
         setStartButton.set_tooltip_text("Set trim start to the current playhead");
         setEndButton.set_tooltip_text("Set trim end to the current playhead");
         playPreviewButton.set_tooltip_text("Preview only the selected trim range");
         stopPreviewButton.set_tooltip_text("Stop trim preview playback");
         double playheadSeconds = b.trimStart;
+        double snapTargetSeconds = b.trimStart;
+        bool snapTargetValid = false;
         bool previewActive = false;
         const int previewKey = PREVIEW_KEY_BASE - id;
         Gtk::DrawingArea waveformArea;
@@ -1800,6 +1818,8 @@ entry { background: #ffffff; color: #202124; }
         auto waveformTask = std::make_shared<TaskHandle>();
         bool waveformBusy = false;
         std::vector<double> waveformPeaks;
+        std::vector<double> waveformSamples;
+        int waveformSampleRate = 0;
         int activeTrimHandle = 0; // 0=cursor, 1=start, 2=end
         auto trim_editor_reversed = [&]() {
             return directionCombo.get_active_id() == "reverse";
@@ -1827,12 +1847,17 @@ entry { background: #ffffff; color: #202124; }
         auto setWaveformBusy = [&]() {
             const bool canUseTrim = !waveformBusy && audioDuration > 0.0;
             resetTrimButton.set_sensitive(canUseTrim);
+            const bool canSnap = canUseTrim && !waveformSamples.empty() && waveformSampleRate > 0;
+            snapStartButton.set_sensitive(canSnap);
+            snapEndButton.set_sensitive(canSnap);
             setStartButton.set_sensitive(canUseTrim);
             setEndButton.set_sensitive(canUseTrim);
             playPreviewButton.set_sensitive(canUseTrim);
         };
         auto reloadWaveform = [&]() {
             waveformPeaks.clear();
+            waveformSamples.clear();
+            waveformSampleRate = 0;
             waveformArea.queue_draw();
             waveformGeneration->fetch_add(1);
             waveformBusy = false;
@@ -1867,10 +1892,10 @@ entry { background: #ffffff; color: #202124; }
             *waveformTask = taskRunner.submit(
                 "waveform-generate",
                 [file, duration](pulsepad::CancellationToken token) {
-                    if (token.cancellation_requested()) return std::vector<double>{};
-                    return generate_waveform_peaks(file, duration);
+                    if (token.cancellation_requested()) return pulsepad::WaveformData{};
+                    return generate_waveform_data(file, duration);
                 },
-                [alive, dialogAlive, waveformGeneration, generation, &waveformPeaks, &waveformArea, &waveformHelp, &waveformBusy, &setWaveformBusy, &trim_editor_reversed](TaskOutcome<std::vector<double>> outcome) mutable {
+                [alive, dialogAlive, waveformGeneration, generation, duration, &waveformPeaks, &waveformSamples, &waveformSampleRate, &waveformArea, &waveformHelp, &waveformBusy, &setWaveformBusy, &trim_editor_reversed](TaskOutcome<pulsepad::WaveformData> outcome) mutable {
                     if (!alive->load() || !dialogAlive->load() || waveformGeneration->load() != generation) return;
                     waveformBusy = false;
                     setWaveformBusy();
@@ -1880,7 +1905,18 @@ entry { background: #ffffff; color: #202124; }
                         waveformArea.queue_draw();
                         return;
                     }
-                    waveformPeaks = std::move(outcome.value);
+                    waveformPeaks = std::move(outcome.value.peaks);
+                    waveformSamples = std::move(outcome.value.monoSamples);
+                    waveformSampleRate = outcome.value.sampleRate;
+                    setWaveformBusy();
+                    {
+                        std::ostringstream zs;
+                        zs << "waveform ready peaks=" << waveformPeaks.size()
+                           << " samples=" << waveformSamples.size()
+                           << " sampleRate=" << waveformSampleRate
+                           << " duration=" << duration;
+                        debug_zero_crossing_log(zs.str());
+                    }
                     if (waveformPeaks.empty()) waveformHelp.set_text(um::waveform_failed("no waveform samples were produced"));
                     else waveformHelp.set_text(trim_editor_reversed()
                                                    ? "Waveform ready: reversed playback order; drag handles to trim, click waveform to preview/playhead."
@@ -1893,10 +1929,19 @@ entry { background: #ffffff; color: #202124; }
             int width = std::max(1, waveformArea.get_allocated_width());
             return std::max(0.0, std::min(audioDuration, (x / static_cast<double>(width)) * audioDuration));
         };
+        auto set_snap_target = [&](double t) {
+            if (audioDuration <= 0.0) return;
+            snapTargetSeconds = std::max(0.0, std::min(audioDuration, t));
+            snapTargetValid = true;
+        };
         auto set_playhead = [&](double t) {
             if (audioDuration <= 0.0) return;
             playheadSeconds = std::max(0.0, std::min(audioDuration, t));
             waveformArea.queue_draw();
+        };
+        auto set_waveform_cursor = [&](double t) {
+            set_snap_target(t);
+            set_playhead(t);
         };
         auto set_trim_from_x = [&](double x, int handle) {
             if (audioDuration <= 0.0) return;
@@ -1906,13 +1951,13 @@ entry { background: #ffffff; color: #202124; }
                 if (handle == 1) {
                     t = std::min(t, std::max(0.0, trimEnd.get_value() - minGap));
                     trimStart.set_value(t);
-                    set_playhead(t);
+                    set_waveform_cursor(t);
                 } else if (handle == 2) {
                     t = std::max(t, std::min(audioDuration, trimStart.get_value() + minGap));
                     trimEnd.set_value(t);
-                    set_playhead(t);
+                    set_waveform_cursor(t);
                 } else {
-                    set_playhead(t);
+                    set_waveform_cursor(t);
                 }
                 return;
             }
@@ -1921,14 +1966,84 @@ entry { background: #ffffff; color: #202124; }
             if (handle == 1) {
                 t = std::min(t, std::max(0.0, displayEnd - minGap));
                 trimEnd.set_value(std::max(0.0, std::min(audioDuration, audioDuration - t)));
-                set_playhead(t);
+                set_waveform_cursor(t);
             } else if (handle == 2) {
                 t = std::max(t, std::min(audioDuration, displayStart + minGap));
                 trimStart.set_value(std::max(0.0, std::min(audioDuration, audioDuration - t)));
-                set_playhead(t);
+                set_waveform_cursor(t);
             } else {
-                set_playhead(t);
+                set_waveform_cursor(t);
             }
+        };
+        auto snap_trim_boundary_to_zero_crossing = [&](bool startBoundary) {
+            if (audioDuration <= 0.0) {
+                debug_zero_crossing_log("snap requested but audioDuration <= 0");
+                return false;
+            }
+            if (waveformSamples.empty() || waveformSampleRate <= 0) {
+                std::ostringstream zs;
+                zs << "snap requested but waveform samples unavailable: samples=" << waveformSamples.size()
+                   << " sampleRate=" << waveformSampleRate
+                   << " busy=" << (waveformBusy ? "true" : "false");
+                debug_zero_crossing_log(zs.str());
+                waveformHelp.set_text("Zero-crossing snap unavailable: waveform samples are not loaded yet.");
+                return false;
+            }
+
+            const double boundary = startBoundary ? trimStart.get_value() : trimEnd.get_value();
+            const double target = snapTargetValid ? snapTargetSeconds : playheadSeconds;
+            {
+                std::ostringstream zs;
+                zs << (startBoundary ? "Snap Start" : "Snap End")
+                   << " requested boundary=" << boundary
+                   << " playhead=" << playheadSeconds
+                   << " snapTarget=" << snapTargetSeconds
+                   << " snapTargetValid=" << (snapTargetValid ? "true" : "false")
+                   << " target=" << target
+                   << " duration=" << audioDuration
+                   << " samples=" << waveformSamples.size()
+                   << " sampleRate=" << waveformSampleRate;
+                debug_zero_crossing_log(zs.str());
+            }
+
+            constexpr double kButtonSnapSearchWindowSeconds = 0.100;
+            auto snapped = find_nearest_zero_crossing(waveformSamples, waveformSampleRate, target, audioDuration, kButtonSnapSearchWindowSeconds);
+            if (!snapped) {
+                std::ostringstream zs;
+                zs << "no zero crossing near target=" << target
+                   << " within button search window=" << kButtonSnapSearchWindowSeconds;
+                debug_zero_crossing_log(zs.str());
+                waveformHelp.set_text(startBoundary ? "No nearby zero crossing found for trim start/cursor." : "No nearby zero crossing found for trim end/cursor.");
+                return false;
+            }
+
+            double minGap = std::min(0.01, audioDuration);
+            double value = *snapped;
+            double unclampedValue = value;
+            if (startBoundary) {
+                value = std::min(value, std::max(0.0, trimEnd.get_value() - minGap));
+                trimStart.set_value(value);
+            } else {
+                value = std::max(value, std::min(audioDuration, trimStart.get_value() + minGap));
+                trimEnd.set_value(value);
+            }
+            set_snap_target(value);
+            set_playhead(value);
+            {
+                std::ostringstream zs;
+                zs << (startBoundary ? "Snap Start" : "Snap End")
+                   << " found=" << unclampedValue
+                   << " applied=" << value
+                   << " minGap=" << minGap
+                   << " trimStartNow=" << trimStart.get_value()
+                   << " trimEndNow=" << trimEnd.get_value();
+                debug_zero_crossing_log(zs.str());
+            }
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(6) << value;
+            waveformHelp.set_text(std::string(startBoundary ? "Trim start" : "Trim end") + " snapped to zero crossing at " + ss.str() + " s.");
+            waveformArea.queue_draw();
+            return true;
         };
         waveformArea.set_draw_func([&](const Cairo::RefPtr<Cairo::Context>& cr, int width, int height) {
             const int w = std::max(1, width);
@@ -2048,6 +2163,8 @@ entry { background: #ffffff; color: #202124; }
         trimControlsRow->append(trimEndLabel );
         trimControlsRow->append(trimEnd );
         trimControlsRow->append(resetTrimButton );
+        trimControlsRow->append(snapStartButton );
+        trimControlsRow->append(snapEndButton );
         trimControlsRow->append(setStartButton );
         trimControlsRow->append(setEndButton );
         trimControlsRow->append(playPreviewButton );
@@ -2470,6 +2587,7 @@ entry { background: #ffffff; color: #202124; }
                 v = std::max(0.0, trimEnd.get_value() - minGap);
                 trimStart.set_value(v);
             }
+            set_snap_target(v);
             invalidate_normalization_analysis(b);
             ensureNormalizationAnalysis();
         });
@@ -2481,6 +2599,7 @@ entry { background: #ffffff; color: #202124; }
                 v = std::min(audioDuration, trimStart.get_value() + minGap);
                 trimEnd.set_value(v);
             }
+            set_snap_target(v);
             invalidate_normalization_analysis(b);
             ensureNormalizationAnalysis();
         });
@@ -2488,6 +2607,18 @@ entry { background: #ffffff; color: #202124; }
             trimStart.set_value(0.0);
             trimEnd.set_value(audioDuration > 0.0 ? audioDuration : 0.0);
             playheadSeconds = 0.0;
+            snapTargetSeconds = 0.0;
+            snapTargetValid = false;
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
+        });
+        snapStartButton.signal_clicked().connect([&]() {
+            if (!snap_trim_boundary_to_zero_crossing(true)) return;
+            invalidate_normalization_analysis(b);
+            ensureNormalizationAnalysis();
+        });
+        snapEndButton.signal_clicked().connect([&]() {
+            if (!snap_trim_boundary_to_zero_crossing(false)) return;
             invalidate_normalization_analysis(b);
             ensureNormalizationAnalysis();
         });
@@ -2500,6 +2631,7 @@ entry { background: #ffffff; color: #202124; }
             } else {
                 trimStart.set_value(std::min(playheadSeconds, trimEnd.get_value() - minGap));
             }
+            set_snap_target(trimStart.get_value());
             invalidate_normalization_analysis(b);
             ensureNormalizationAnalysis();
         });
@@ -2512,6 +2644,7 @@ entry { background: #ffffff; color: #202124; }
             } else {
                 trimEnd.set_value(std::max(playheadSeconds, trimStart.get_value() + minGap));
             }
+            set_snap_target(trimEnd.get_value());
             invalidate_normalization_analysis(b);
             ensureNormalizationAnalysis();
         });

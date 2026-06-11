@@ -62,18 +62,23 @@ if(BUILD_TESTING)
     add_executable(pulsepad_user_message_tests
         tests/test_user_messages.cpp
     )
+    add_executable(pulsepad_waveform_tests
+        tests/test_waveform.cpp
+    )
     target_link_libraries(pulsepad_logic_tests PRIVATE pulsepad_logic pulsepad_warnings)
     target_link_libraries(pulsepad_package_tests PRIVATE pulsepad_logic pulsepad_warnings)
     target_link_libraries(pulsepad_subprocess_tests PRIVATE pulsepad_logic pulsepad_warnings)
     target_link_libraries(pulsepad_task_runner_tests PRIVATE pulsepad_logic pulsepad_warnings)
     target_link_libraries(pulsepad_midi_tests PRIVATE pulsepad_logic pulsepad_warnings)
     target_link_libraries(pulsepad_user_message_tests PRIVATE pulsepad_logic pulsepad_warnings)
+    target_link_libraries(pulsepad_waveform_tests PRIVATE pulsepad_logic pulsepad_warnings)
     add_test(NAME pulsepad_logic_tests COMMAND pulsepad_logic_tests)
     add_test(NAME pulsepad_package_tests COMMAND pulsepad_package_tests)
     add_test(NAME pulsepad_subprocess_tests COMMAND pulsepad_subprocess_tests)
     add_test(NAME pulsepad_task_runner_tests COMMAND pulsepad_task_runner_tests)
     add_test(NAME pulsepad_midi_tests COMMAND pulsepad_midi_tests)
     add_test(NAME pulsepad_user_message_tests COMMAND pulsepad_user_message_tests)
+    add_test(NAME pulsepad_waveform_tests COMMAND pulsepad_waveform_tests)
     set_tests_properties(pulsepad_subprocess_tests PROPERTIES TIMEOUT 10)
 endif()
 
